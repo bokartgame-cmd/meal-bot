@@ -18,6 +18,7 @@ from bot.keyboards import (
     get_start_menu_inline,
 )
 from core.qr import generate_diplink, generate_qr_card_bytes
+from core.archive import is_user_archived
 from core.services import get_active_code, get_user_info, save_user_chat_id, verify_student
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,11 @@ async def cmd_start(message: Message, state: FSMContext):
     """Точка входа: регистрация, QR-карточка студента или меню сотрудника"""
     await state.clear()
     info = await get_user_info(message.from_user.id)
+
+    # Студент в архиве (практика, академ): аккаунт перенесён, регистрироваться заново не нужно
+    if not info and await is_user_archived(message.from_user.id):
+        await message.answer(STUDENT_INACTIVE_TEXT)
+        return
 
     # Незарегистрированный -> регистрация
     if not info or not info.get("is_verified"):

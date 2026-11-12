@@ -76,6 +76,10 @@ async def verify_student(user_id: int, full_name: str, group: str, password: str
         )
         allowed = await cur.fetchone()
         if not allowed:
+            # Студент в архиве (практика, академ) — это «приостановлено», а не «нет в списках»
+            from core.archive import is_name_archived
+            if await is_name_archived(db, norm_name, norm_group):
+                return {"status": "denied", "reason": "deactivated"}
             return {"status": "denied", "reason": "not_in_list"}
 
         # 2. Студент есть в истории, но НЕ в текущем списке получателей
@@ -271,6 +275,17 @@ async def get_user_info(user_id: int) -> dict | None:
 
 VALID_ROLES = ("student", "staff", "admin")
 
+# Имя/группа студента для отчётов: из users, а если студента перенесли в архив — из архива;
+# если архив очищен — подпись-заглушка (выдачи при этом остаются в общих итогах).
+_NAME_SQL = (
+    "COALESCE(u.full_name, (SELECT a.full_name FROM archived_students a "
+    "WHERE a.user_id = m.user_id LIMIT 1), 'Удалённый студент')"
+)
+_GROUP_SQL = (
+    "COALESCE(u.group_number, (SELECT a.group_number FROM archived_students a "
+    "WHERE a.user_id = m.user_id LIMIT 1), '—')"
+)
+
 
 async def set_user_role(user_id: int, role: str) -> dict:
     """Назначить роль пользователю (для команды /set_role).
@@ -362,9 +377,9 @@ async def get_daily_report(date_str: str = None) -> list:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            """SELECT m.issued_at, u.full_name, u.group_number, m.method
+            f"""SELECT m.issued_at, {_NAME_SQL} AS full_name, {_GROUP_SQL} AS group_number, m.method
                FROM meals_log m
-               JOIN users u ON m.user_id = u.user_id
+               LEFT JOIN users u ON m.user_id = u.user_id
                WHERE DATE(m.issued_at) = ?
                ORDER BY m.issued_at""",
             (date_str,)
@@ -433,13 +448,13 @@ async def get_stats_for_period(from_date: str, to_date: str) -> dict:
 
         # 1. Детальная таблица: кто сколько получил
         cur = await db.execute(
-            """
-            SELECT u.full_name, u.group_number, COUNT(*) AS cnt
+            f"""
+            SELECT {_NAME_SQL} AS full_name, {_GROUP_SQL} AS group_number, COUNT(*) AS cnt
             FROM meals_log m
-            JOIN users u ON u.user_id = m.user_id
+            LEFT JOIN users u ON u.user_id = m.user_id
             WHERE DATE(m.issued_at) BETWEEN ? AND ?
             GROUP BY m.user_id
-            ORDER BY cnt DESC, u.full_name
+            ORDER BY cnt DESC, full_name
             """,
             (from_date, to_date),
         )

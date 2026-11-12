@@ -13,17 +13,27 @@ from bot.fsm import AdminStats, AdminImport
 from bot.keyboards import (
     BTN_CANCEL,
     CB_ADMIN_STATS,
+    CB_ADMIN_ARCHIVE,
     CB_ADMIN_IMPORT,
+    CB_ARCHIVE_CANCEL,
+    CB_ARCHIVE_CLEAR_ALL,
+    CB_ARCHIVE_CLEAR_OLD,
+    CB_ARCHIVE_CONFIRM_ALL,
+    CB_ARCHIVE_CONFIRM_OLD,
     CB_CANCEL,
     CB_STATS_CUSTOM,
     CB_STATS_MONTH,
     CB_STATS_WEEK,
     CB_STATS_YEAR,
     ROLE_ADMIN,
+    get_archive_confirm_inline,
+    get_archive_menu_inline,
     get_cancel_inline,
     get_start_menu_inline,
     get_stats_period_inline,
 )
+import config
+from core.archive import clear_archive, count_archived
 from core.excel import build_stats_excel, build_passwords_excel
 from core.importer import import_students_from_file
 from core.max_api import send_text_to_user
@@ -143,6 +153,106 @@ async def cmd_set_role(message: Message, command: CommandObject):
         report += "\n⚠️ Уведомить пользователя не удалось (возможно, он ещё не запускал бота)."
 
     await message.answer(report)
+
+
+# ====================
+# АРХИВ НЕАКТИВНЫХ СТУДЕНТОВ
+# ====================
+
+def _archive_text(total: int, old: int) -> str:
+    return (
+        "🗄 Архив студентов\n\n"
+        "Сюда автоматически попадают студенты, которых нет в загруженном списке "
+        "(практика, академический отпуск, отчисление). Если студент снова появится "
+        "в списке при импорте, он вернётся из архива со своим паролем и аккаунтом.\n\n"
+        f"В архиве сейчас: {total}\n"
+        f"Из них пролежало дольше {config.ARCHIVE_OLD_DAYS} дн.: {old}"
+    )
+
+
+async def _show_archive(target: Message):
+    total = await count_archived()
+    old = await count_archived(config.ARCHIVE_OLD_DAYS)
+    await target.answer(
+        _archive_text(total, old),
+        reply_markup=get_archive_menu_inline(total, old, config.ARCHIVE_OLD_DAYS),
+    )
+
+
+async def _delete_quietly(message: Message):
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+
+@router.message(Command("archive"))
+async def cmd_archive(message: Message, state: FSMContext):
+    if not await _require_admin(message, message.from_user.id):
+        return
+    await state.clear()
+    await _show_archive(message)
+
+
+@router.callback_query(F.data == CB_ADMIN_ARCHIVE)
+async def cb_admin_archive(callback: CallbackQuery, state: FSMContext):
+    if not await _require_admin(callback, callback.from_user.id):
+        return
+    await callback.answer()
+    await state.clear()
+    await _delete_quietly(callback.message)
+    await _show_archive(callback.message)
+
+
+@router.callback_query(F.data.in_({CB_ARCHIVE_CLEAR_OLD, CB_ARCHIVE_CLEAR_ALL}))
+async def cb_archive_clear_ask(callback: CallbackQuery):
+    """Шаг 1: запрос подтверждения (удаление необратимо)"""
+    if not await _require_admin(callback, callback.from_user.id):
+        return
+    await callback.answer()
+    only_old = callback.data == CB_ARCHIVE_CLEAR_OLD
+    count = await count_archived(config.ARCHIVE_OLD_DAYS if only_old else None)
+    if not count:
+        await callback.message.answer("ℹ️ Удалять нечего.")
+        return
+    scope = f"пролежавших в архиве дольше {config.ARCHIVE_OLD_DAYS} дн." if only_old else "ВСЕХ студентов"
+    await _delete_quietly(callback.message)
+    await callback.message.answer(
+        f"⚠️ Будет безвозвратно удалено {count} студ. ({scope}).\n\n"
+        "Их пароли и привязка аккаунтов пропадут: если кто-то из них вернётся, "
+        "ему выдадут новый пароль и придётся зарегистрироваться заново.\n"
+        "История выдач в общих итогах статистики сохранится, но без имён.\n\n"
+        "Подтвердить удаление?",
+        reply_markup=get_archive_confirm_inline(
+            CB_ARCHIVE_CONFIRM_OLD if only_old else CB_ARCHIVE_CONFIRM_ALL
+        ),
+    )
+
+
+@router.callback_query(F.data.in_({CB_ARCHIVE_CONFIRM_OLD, CB_ARCHIVE_CONFIRM_ALL}))
+async def cb_archive_clear_confirm(callback: CallbackQuery):
+    """Шаг 2: удаление после подтверждения"""
+    if not await _require_admin(callback, callback.from_user.id):
+        return
+    await callback.answer()
+    only_old = callback.data == CB_ARCHIVE_CONFIRM_OLD
+    deleted = await clear_archive(config.ARCHIVE_OLD_DAYS if only_old else None)
+    logger.warning("Админ %s очистил архив студентов (%s): удалено %d",
+                   callback.from_user.id, "старше %d дн." % config.ARCHIVE_OLD_DAYS if only_old else "весь", deleted)
+    await _delete_quietly(callback.message)
+    await callback.message.answer(f"✅ Из архива удалено студентов: {deleted}.")
+    await _show_archive(callback.message)
+
+
+@router.callback_query(F.data == CB_ARCHIVE_CANCEL)
+async def cb_archive_back(callback: CallbackQuery):
+    await callback.answer()
+    info = await get_user_info(callback.from_user.id)
+    await _delete_quietly(callback.message)
+    await callback.message.answer(
+        "👋 Выберите действие:",
+        reply_markup=get_start_menu_inline(info["role"] if info else "admin"),
+    )
 
 
 # ====================
@@ -280,7 +390,8 @@ async def cb_admin_import(callback: CallbackQuery, state: FSMContext):
         "📥 Отправьте файл со списком студентов (.xlsx, .xls или .csv).\n\n"
         "📋 Формат «Приказ»: заголовок группы (например, 28-143), затем строки [номер, Фамилия, Имя, Отчество].\n"
         "📋 Плоский формат: колонки ФИО, Группа, (опционально) Пароль.\n\n"
-        "⚠️ Студенты, которых нет в новом списке, будут деактивированы.\n"
+        "⚠️ Студенты, которых нет в новом списке, будут перенесены в архив "
+        "(вернутся из него, если снова появятся в списке).\n"
         "🔑 Для новых студентов бот сгенерирует пароли и пришлёт их Excel-файлом.",
         reply_markup=get_cancel_inline(),
     )
@@ -341,16 +452,13 @@ async def process_import_file(message: Message, state: FSMContext):
     report = (
         f"✅ Импорт завершён!\n\n"
         f"📥 Добавлено новых: {result['added']}\n"
-        f"🔄 Реактивировано: {result['reactivated']}\n"
+        f"♻️ Возвращено из архива: {result['restored'] + result['reactivated']}\n"
         f"⏸️ Уже активных: {result['kept']}\n"
-        f"⛔ Деактивировано: {result['deactivated']}\n"
+        f"🗄 Перенесено в архив: {result['archived']}\n"
         f"⚠️ Отбраковано строк: {result['skipped_parse']}\n\n"
-        f"👥 Синхронизация пользователей:\n"
-        f"  Отключено: {result['users_off']}\n"
-        f"  Включено: {result['users_on']}\n\n"
-        f"📊 Итого в списке:\n"
+        f"📊 Итого:\n"
         f"  Активных: {result['total_active']}\n"
-        f"  Неактивных: {result['total_inactive']}"
+        f"  В архиве: {result['total_archived']}"
     )
     await message.answer(report)
 

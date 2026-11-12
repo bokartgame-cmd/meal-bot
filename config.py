@@ -8,6 +8,7 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "data" / "meal_bot.db"
 LOGS_DIR = BASE_DIR / "logs"
+BACKUP_DIR = BASE_DIR / "backups"
 
 # === MAX ===
 MAX_BOT_TOKEN = os.getenv("MAX_BOT_TOKEN", "")
@@ -22,8 +23,14 @@ MAX_API_BASE_URL = os.getenv("MAX_API_BASE_URL", "https://platform-api.max.ru").
 BOT_TZ = os.getenv("BOT_TZ", "Asia/Vladivostok")
 # Ежедневная автоматическая рассылка QR-кодов студентам (время по BOT_TZ)
 DAILY_QR_ENABLED = os.getenv("DAILY_QR_ENABLED", "1").lower() not in ("0", "false", "no", "off")
-DAILY_QR_HOUR = int(os.getenv("DAILY_QR_HOUR", "6"))
+DAILY_QR_HOUR = int(os.getenv("DAILY_QR_HOUR", "9"))
 DAILY_QR_MINUTE = int(os.getenv("DAILY_QR_MINUTE", "0"))
+# Ежедневный бэкап БД (время по BOT_TZ); хранится BACKUP_KEEP последних копий (по одной на день)
+BACKUP_ENABLED = os.getenv("BACKUP_ENABLED", "1").lower() not in ("0", "false", "no", "off")
+BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", "3"))
+BACKUP_KEEP = int(os.getenv("BACKUP_KEEP", "7"))
+# Архив неактивных студентов: «старым» считается запись, пролежавшая в архиве столько дней
+ARCHIVE_OLD_DAYS = int(os.getenv("ARCHIVE_OLD_DAYS", "365"))
 ALLOWED_STAFF_ATTEMPTS = 10
 STAFF_COOLDOWN_SECONDS = 60
 QR_PAYLOAD_MAX_LEN = 128

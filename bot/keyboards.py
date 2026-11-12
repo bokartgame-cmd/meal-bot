@@ -14,6 +14,7 @@ BTN_HELP = "📖 Инструкция"
 BTN_CANCEL = "❌ Отмена"
 BTN_RESTART_REG = "🔄 Начать заново"
 ADMIN_BTN_IMPORT = "📥 Импорт студентов"
+ADMIN_BTN_ARCHIVE = "🗄 Архив студентов"
 
 STUDENT_MEAL_RECEIVED_TEXT = "✅ Успешное получение! Приятного аппетита."
 STUDENT_INACTIVE_TEXT = (
@@ -37,6 +38,13 @@ CB_STATS_CUSTOM = "stats_custom"
 
 CB_ADMIN_IMPORT = "admin_import"
 
+CB_ADMIN_ARCHIVE = "admin_archive"
+CB_ARCHIVE_CLEAR_OLD = "archive_clear_old"
+CB_ARCHIVE_CLEAR_ALL = "archive_clear_all"
+CB_ARCHIVE_CONFIRM_OLD = "archive_confirm_old"
+CB_ARCHIVE_CONFIRM_ALL = "archive_confirm_all"
+CB_ARCHIVE_CANCEL = "archive_cancel"
+
 # --- Тексты справок ---
 STUDENT_HELP_TEXT = (
     "📖 Как это работает\n\n"
@@ -56,7 +64,10 @@ ADMIN_HELP_TEXT = (
     "2. Выберите период: неделя / месяц / год / свой.\n"
     "3. Бот пришлёт Excel-файл с детальной таблицей и сводкой.\n\n"
     "Выдача ролей: /set_role <id> <student|staff|admin>\n"
-    "Например: /set_role 123456789 staff"
+    "Например: /set_role 123456789 staff\n\n"
+    "Архив студентов: /archive (или кнопка «🗄 Архив студентов»).\n"
+    "Студенты, которых нет в загруженном списке, автоматически уходят в архив "
+    "и возвращаются из него, когда снова появляются в списке."
 )
 
 def get_start_menu_inline(role: str) -> InlineKeyboardMarkup:
@@ -66,6 +77,7 @@ def get_start_menu_inline(role: str) -> InlineKeyboardMarkup:
         # Оставляем только функционал управления, инструкцию убрали
         keyboard.append([InlineKeyboardButton(text=ADMIN_BTN_IMPORT, callback_data=CB_ADMIN_IMPORT)])
         keyboard.append([InlineKeyboardButton(text=ADMIN_BTN_STATS, callback_data=CB_ADMIN_STATS)])
+        keyboard.append([InlineKeyboardButton(text=ADMIN_BTN_ARCHIVE, callback_data=CB_ADMIN_ARCHIVE)])
     elif role == ROLE_STAFF:
         keyboard.append([InlineKeyboardButton(text=STAFF_BTN_CODE, callback_data=CB_STAFF_CODE)])
         keyboard.append([InlineKeyboardButton(text=BTN_HELP, callback_data=CB_HELP)])
@@ -73,6 +85,27 @@ def get_start_menu_inline(role: str) -> InlineKeyboardMarkup:
         keyboard.append([InlineKeyboardButton(text=STUDENT_BTN_QR, callback_data=CB_STUDENT_QR)])
         keyboard.append([InlineKeyboardButton(text=BTN_HELP, callback_data=CB_HELP)])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_archive_menu_inline(total: int, old: int, old_days: int) -> InlineKeyboardMarkup:
+    """Меню архива: кнопки очистки показываются, только если есть что очищать"""
+    keyboard = []
+    if old:
+        months = max(1, round(old_days / 30))
+        keyboard.append([InlineKeyboardButton(
+            text=f"🧹 Удалить старше {months} мес. ({old})", callback_data=CB_ARCHIVE_CLEAR_OLD)])
+    if total:
+        keyboard.append([InlineKeyboardButton(
+            text=f"🗑 Очистить весь архив ({total})", callback_data=CB_ARCHIVE_CLEAR_ALL)])
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=CB_ARCHIVE_CANCEL)])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_archive_confirm_inline(confirm_cb: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да, удалить безвозвратно", callback_data=confirm_cb)],
+        [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_ARCHIVE_CANCEL)],
+    ])
 
 
 def get_qr_menu_inline() -> InlineKeyboardMarkup:

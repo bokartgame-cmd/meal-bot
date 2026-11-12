@@ -9,6 +9,8 @@ import config
 from data.init_db import init_db
 from bot.routers import user, staff, admin
 from bot.daily_qr import daily_qr_loop
+from core.archive import archive_inactive_students
+from core.backup import backup_loop, ensure_backup_today
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,6 +25,18 @@ async def main():
 
     # 1. Инициализация БД
     await init_db()
+
+    # 1.1. Страховка перед переносом неактивных студентов в архив: бэкап на сегодня (если его ещё нет)
+    if config.BACKUP_ENABLED:
+        try:
+            await ensure_backup_today()
+        except Exception:
+            logger.exception("Не удалось сделать бэкап БД при запуске")
+    # 1.2. Неактивные студенты (остатки старой схемы) уходят в архив; операция идемпотентна
+    try:
+        await archive_inactive_students()
+    except Exception:
+        logger.exception("Не удалось перенести неактивных студентов в архив")
 
     # 2. Создание бота через aiogram-max
     logger.info("Подключение к MAX API...")
@@ -40,17 +54,19 @@ async def main():
     dp = Dispatcher()
     dp.include_routers(admin.router, staff.router, user.router)
 
-    # 5. Фоновая ежедневная рассылка QR (polling не затрагивает)
-    qr_task = None
+    # 5. Фоновые задачи: ежедневная рассылка QR и бэкап БД (polling не затрагивают)
+    bg_tasks = []
     if config.DAILY_QR_ENABLED:
-        qr_task = asyncio.create_task(daily_qr_loop(bot))
+        bg_tasks.append(asyncio.create_task(daily_qr_loop(bot)))
+    if config.BACKUP_ENABLED:
+        bg_tasks.append(asyncio.create_task(backup_loop()))
 
     logger.info(f"🚀 MAX-бот '{config.MAX_BOT_NAME}' успешно запущен (long-polling)")
     try:
         await dp.start_polling(bot)
     finally:
-        if qr_task:
-            qr_task.cancel()
+        for task in bg_tasks:
+            task.cancel()
 
 if __name__ == "__main__":
     try:
