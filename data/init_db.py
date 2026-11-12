@@ -49,6 +49,8 @@ async def init_db():
         await db.executescript(SCHEMA)
         # Умные миграции
         await ensure_column(db, "users", "code_date", "TEXT")
+        # chat_id личного диалога со студентом (в MAX он НЕ равен user_id)
+        await ensure_column(db, "users", "chat_id", "BIGINT")
         await ensure_column(db, "allowed_students", "password", "TEXT")
         await ensure_column(db, "allowed_students", "is_active", "INTEGER DEFAULT 1")
         await db.commit()

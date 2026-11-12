@@ -54,7 +54,9 @@ ADMIN_HELP_TEXT = (
     "📖 Инструкция администратора\n\n"
     "1. Нажмите «📊 Статистика».\n"
     "2. Выберите период: неделя / месяц / год / свой.\n"
-    "3. Бот пришлёт Excel-файл с детальной таблицей и сводкой."
+    "3. Бот пришлёт Excel-файл с детальной таблицей и сводкой.\n\n"
+    "Выдача ролей: /set_role <id> <student|staff|admin>\n"
+    "Например: /set_role 123456789 staff"
 )
 
 def get_start_menu_inline(role: str) -> InlineKeyboardMarkup:

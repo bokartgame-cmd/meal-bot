@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from aiogram import Router, F
-from aiogram.filters import StateFilter
+from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
@@ -26,9 +26,12 @@ from bot.keyboards import (
 )
 from core.excel import build_stats_excel, build_passwords_excel
 from core.importer import import_students_from_file
+from core.max_api import send_text_to_user
 from core.services import (
+    VALID_ROLES,
     get_stats_for_period,
     get_user_info,
+    set_user_role,
     parse_date,
     period_last_month,
     period_last_week,
@@ -65,6 +68,82 @@ async def send_stats(message: Message, from_date: str, to_date: str):
     # 🔧 ИСПРАВЛЕНИЕ: Разделяем отправку текста и документа, чтобы избежать 400 Bad Request от MAX API
     await message.answer(caption)
     await message.answer_document(document=file)
+
+# ====================
+# ВЫДАЧА РОЛЕЙ: /set_role <id> <role>
+# ====================
+# Хендлер стоит ПЕРВЫМ в роутере: команда должна работать в любом FSM-состоянии
+# (иначе её перехватит текстовый хендлер состояния, например ввода даты).
+
+ROLE_LABELS = {"student": "студент", "staff": "сотрудник столовой", "admin": "администратор"}
+SET_ROLE_USAGE = (
+    "ℹ️ Использование: /set_role <id> <роль>\n"
+    "Роли: student, staff, admin\n"
+    "Пример: /set_role 123456789 staff\n\n"
+    "ID пользователя можно узнать командой /id (пользователь отправляет её боту сам)."
+)
+
+
+@router.message(Command("set_role"))
+async def cmd_set_role(message: Message, command: CommandObject):
+    """Назначение роли пользователю администратором"""
+    if not await _require_admin(message, message.from_user.id):
+        return
+
+    args = (command.args or "").split()
+    if len(args) != 2:
+        await message.answer(SET_ROLE_USAGE)
+        return
+
+    raw_id, role = args[0], args[1].lower()
+    if not raw_id.isdigit():
+        await message.answer(f"❌ ID должен быть числом, получено: {raw_id}\n\n{SET_ROLE_USAGE}")
+        return
+    if role not in VALID_ROLES:
+        await message.answer(f"❌ Неизвестная роль: {args[1]}\n\n{SET_ROLE_USAGE}")
+        return
+
+    target_id = int(raw_id)
+
+    # Защита от случайного снятия прав с себя (можно остаться без администраторов)
+    if target_id == message.from_user.id and role != "admin":
+        await message.answer("⛔ Нельзя понизить собственную роль. Попросите другого администратора.")
+        return
+
+    try:
+        result = await set_user_role(target_id, role)
+    except Exception as e:
+        logger.exception("Ошибка при назначении роли")
+        await message.answer(f"❌ Не удалось назначить роль: {e}")
+        return
+
+    if result["status"] == "not_found":
+        await message.answer(
+            f"❌ Пользователь {target_id} не найден. Студент появляется в базе после регистрации "
+            f"в боте. Для staff/admin запись создаётся автоматически."
+        )
+        return
+
+    if result["status"] == "created":
+        report = f"✅ Создан пользователь {target_id} с ролью «{role}» ({ROLE_LABELS[role]})."
+    else:
+        report = f"✅ Пользователю {target_id} роль изменена: {result['old_role']} → {role}."
+    logger.info("Админ %s назначил роль %s пользователю %s", message.from_user.id, role, target_id)
+
+    # Сообщаем самому пользователю; ошибка здесь не отменяет назначение роли
+    try:
+        await send_text_to_user(
+            message.bot,
+            target_id,
+            f"🔔 Вам назначена роль: {ROLE_LABELS[role]}. Отправьте /start, чтобы открыть меню.",
+        )
+        report += "\n📨 Пользователь уведомлён."
+    except Exception as e:
+        logger.warning("Не удалось уведомить пользователя %s о новой роли: %s", target_id, e)
+        report += "\n⚠️ Уведомить пользователя не удалось (возможно, он ещё не запускал бота)."
+
+    await message.answer(report)
+
 
 # ====================
 # СТАТИСТИКА

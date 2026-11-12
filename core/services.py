@@ -269,6 +269,60 @@ async def get_user_info(user_id: int) -> dict | None:
         return dict(row) if row else None
 
 
+VALID_ROLES = ("student", "staff", "admin")
+
+
+async def set_user_role(user_id: int, role: str) -> dict:
+    """Назначить роль пользователю (для команды /set_role).
+
+    Возвращает {"status": "updated"|"created"|"not_found", "old_role": str | None}.
+    - Пользователь есть в БД: меняем роль; для staff/admin заодно подтверждаем
+      и активируем его (как в set_role.py). При понижении до student флаги не трогаем,
+      чтобы случайно не реактивировать исключённого студента.
+    - Пользователя нет: для staff/admin создаём служебную запись (как в set_role.py);
+      для student создавать нечего — студент появляется через регистрацию.
+    """
+    if role not in VALID_ROLES:
+        raise ValueError(f"Недопустимая роль: {role!r}")
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT role FROM users WHERE user_id = ?", (user_id,))
+        row = await cur.fetchone()
+
+        if row:
+            if role == "student":
+                await db.execute("UPDATE users SET role = ? WHERE user_id = ?", (role, user_id))
+            else:
+                await db.execute(
+                    "UPDATE users SET role = ?, is_verified = 1, is_active = 1 WHERE user_id = ?",
+                    (role, user_id),
+                )
+            await db.commit()
+            return {"status": "updated", "old_role": row[0]}
+
+        if role == "student":
+            return {"status": "not_found", "old_role": None}
+
+        await db.execute(
+            """INSERT INTO users (user_id, full_name, group_number, unique_code,
+                   is_verified, is_active, role)
+               VALUES (?, 'service account', 'service', ?, 1, 1, ?)""",
+            (user_id, generate_unique_code(), role),
+        )
+        await db.commit()
+        return {"status": "created", "old_role": None}
+
+
+async def save_user_chat_id(user_id: int, chat_id: int) -> None:
+    """Запомнить chat_id личного диалога пользователя с ботом (нужен для уведомлений)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET chat_id = ? WHERE user_id = ? AND (chat_id IS NULL OR chat_id != ?)",
+            (int(chat_id), int(user_id), int(chat_id)),
+        )
+        await db.commit()
+
+
 async def get_daily_report(date_str: str = None) -> list:
     """Получить отчет о выдачах за указанную дату (или сегодня)"""
     if not date_str:

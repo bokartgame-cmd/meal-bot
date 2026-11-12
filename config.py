@@ -12,6 +12,10 @@ LOGS_DIR = BASE_DIR / "logs"
 # === MAX ===
 MAX_BOT_TOKEN = os.getenv("MAX_BOT_TOKEN", "")
 MAX_BOT_NAME = os.getenv("MAX_BOT_NAME", "")
+# Базовый URL MAX Bot API для прямых вызовов (резервная отправка по user_id).
+# По умолчанию тот же хост, на который ходит aiogram-max (см. логи).
+# Новый хост https://platform-api2.max.ru требует корневой сертификат Минцифры.
+MAX_API_BASE_URL = os.getenv("MAX_API_BASE_URL", "https://platform-api.max.ru").rstrip("/")
 
 # === Общие настройки ===
 MOSCOW_TZ = "Europe/Moscow"
