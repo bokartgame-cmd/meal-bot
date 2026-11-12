@@ -8,6 +8,7 @@ from aiogram_max import create_bot
 import config
 from data.init_db import init_db
 from bot.routers import user, staff, admin
+from bot.daily_qr import daily_qr_loop
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,8 +40,17 @@ async def main():
     dp = Dispatcher()
     dp.include_routers(admin.router, staff.router, user.router)
 
+    # 5. Фоновая ежедневная рассылка QR (polling не затрагивает)
+    qr_task = None
+    if config.DAILY_QR_ENABLED:
+        qr_task = asyncio.create_task(daily_qr_loop(bot))
+
     logger.info(f"🚀 MAX-бот '{config.MAX_BOT_NAME}' успешно запущен (long-polling)")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        if qr_task:
+            qr_task.cancel()
 
 if __name__ == "__main__":
     try:

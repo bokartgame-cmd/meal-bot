@@ -323,6 +323,37 @@ async def save_user_chat_id(user_id: int, chat_id: int) -> None:
         await db.commit()
 
 
+async def get_students_for_daily_qr(today: str) -> list:
+    """Студенты, которым сегодня ещё не отправлен QR: активные, прошедшие регистрацию,
+    с известным chat_id личного диалога. Возвращает [{"user_id", "chat_id"}, ...]"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT user_id, chat_id FROM users
+               WHERE role = 'student' AND is_verified = 1 AND is_active = 1
+                 AND chat_id IS NOT NULL
+                 AND (qr_sent_date IS NULL OR qr_sent_date != ?)""",
+            (today,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def count_students_without_chat(today: str) -> int:
+    """Сколько активных студентов нельзя охватить рассылкой (chat_id ещё неизвестен)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """SELECT COUNT(*) FROM users
+               WHERE role = 'student' AND is_verified = 1 AND is_active = 1
+                 AND chat_id IS NULL""")
+        return (await cur.fetchone())[0]
+
+
+async def mark_qr_sent(user_id: int, today: str) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET qr_sent_date = ? WHERE user_id = ?", (today, user_id))
+        await db.commit()
+
+
 async def get_daily_report(date_str: str = None) -> list:
     """Получить отчет о выдачах за указанную дату (или сегодня)"""
     if not date_str:

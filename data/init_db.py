@@ -51,6 +51,8 @@ async def init_db():
         await ensure_column(db, "users", "code_date", "TEXT")
         # chat_id личного диалога со студентом (в MAX он НЕ равен user_id)
         await ensure_column(db, "users", "chat_id", "BIGINT")
+        # дата последней успешной ежедневной рассылки QR (чтобы не слать дважды за день)
+        await ensure_column(db, "users", "qr_sent_date", "TEXT")
         await ensure_column(db, "allowed_students", "password", "TEXT")
         await ensure_column(db, "allowed_students", "is_active", "INTEGER DEFAULT 1")
         await db.commit()

@@ -19,6 +19,10 @@ MAX_API_BASE_URL = os.getenv("MAX_API_BASE_URL", "https://platform-api.max.ru").
 
 # === Общие настройки ===
 MOSCOW_TZ = "Europe/Moscow"
+# Ежедневная автоматическая рассылка QR-кодов студентам (время по MOSCOW_TZ)
+DAILY_QR_ENABLED = os.getenv("DAILY_QR_ENABLED", "1").lower() not in ("0", "false", "no", "off")
+DAILY_QR_HOUR = int(os.getenv("DAILY_QR_HOUR", "6"))
+DAILY_QR_MINUTE = int(os.getenv("DAILY_QR_MINUTE", "0"))
 ALLOWED_STAFF_ATTEMPTS = 10
 STAFF_COOLDOWN_SECONDS = 60
 QR_PAYLOAD_MAX_LEN = 128
