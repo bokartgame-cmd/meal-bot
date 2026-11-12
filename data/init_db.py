@@ -31,6 +31,20 @@ CREATE TABLE IF NOT EXISTS meals_log (
 );
 CREATE INDEX IF NOT EXISTS idx_meals_user_date
     ON meals_log(user_id, DATE(issued_at));
+-- Архив неактивных студентов (вышли из списка: практика, академ, отчисление).
+-- Хранит всё, что нужно для возврата: пароль, user_id и chat_id аккаунта.
+CREATE TABLE IF NOT EXISTS archived_students (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    full_name TEXT NOT NULL,
+    group_number TEXT NOT NULL,
+    password TEXT,
+    user_id BIGINT,            -- NULL, если студент так и не зарегистрировался
+    chat_id BIGINT,
+    registered_at TIMESTAMP,
+    archived_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_archived_name ON archived_students(full_name, group_number);
+CREATE INDEX IF NOT EXISTS idx_archived_user ON archived_students(user_id);
 """
 
 async def ensure_column(db, table: str, column: str, definition: str):
@@ -49,6 +63,10 @@ async def init_db():
         await db.executescript(SCHEMA)
         # Умные миграции
         await ensure_column(db, "users", "code_date", "TEXT")
+        # chat_id личного диалога со студентом (в MAX он НЕ равен user_id)
+        await ensure_column(db, "users", "chat_id", "BIGINT")
+        # дата последней успешной ежедневной рассылки QR (чтобы не слать дважды за день)
+        await ensure_column(db, "users", "qr_sent_date", "TEXT")
         await ensure_column(db, "allowed_students", "password", "TEXT")
         await ensure_column(db, "allowed_students", "is_active", "INTEGER DEFAULT 1")
         await db.commit()

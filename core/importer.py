@@ -4,6 +4,13 @@ from pathlib import Path
 import pandas as pd
 import aiosqlite
 from config import DB_PATH
+from core.archive import (
+    archive_student,
+    archive_inactive,
+    get_archived,
+    get_archived_passwords,
+    restore_from_archive,
+)
 from core.services import generate_unique_code, normalize
 
 # Группа: цифры-тире-цифры[буквы] (28-143, 15-224а)
@@ -137,6 +144,7 @@ async def import_students_from_file(file_path: Path) -> dict:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT password FROM allowed_students")
         used_passwords = {r["password"] for r in await cur.fetchall() if r["password"]}
+        used_passwords |= await get_archived_passwords(db)
 
         def gen_password():
             while True:
@@ -145,7 +153,7 @@ async def import_students_from_file(file_path: Path) -> dict:
                     used_passwords.add(pwd)
                     return pwd
 
-        added = reactivated = kept = 0
+        added = reactivated = kept = restored = archived = 0
         new_passwords = []  # (full_name, group_number, password) — для выгрузки
 
         for name, group in students:
@@ -157,6 +165,16 @@ async def import_students_from_file(file_path: Path) -> dict:
             row = await cur.fetchone()
             file_pwd = file_passwords.get((name, group), "")
             if row is None:
+                # Студент вернулся (практика, академ): достаём из архива с прежним паролем и аккаунтом
+                arch = await get_archived(db, name, group)
+                if arch is not None:
+                    pwd = file_pwd or arch["password"] or gen_password()
+                    used_passwords.add(pwd)
+                    await restore_from_archive(db, name, group, pwd)
+                    restored += 1
+                    if not (file_pwd or arch["password"]):
+                        new_passwords.append((name, group, pwd))
+                    continue
                 pwd = file_pwd or gen_password()
                 used_passwords.add(pwd)
                 await db.execute(
@@ -181,51 +199,49 @@ async def import_students_from_file(file_path: Path) -> dict:
                 else:
                     kept += 1
 
-        # Деактивация
+        # Всех, кого нет в новом списке, переносим в архив (а не просто деактивируем)
+        cur = await db.execute("SELECT full_name, group_number FROM allowed_students")
+        gone = {(r["full_name"], r["group_number"]) for r in await cur.fetchall()} - seen
         cur = await db.execute(
-            "SELECT id, full_name, group_number FROM allowed_students WHERE is_active = 1"
+            "SELECT full_name, group_number FROM users WHERE role = 'student' AND is_verified = 1"
         )
-        deactivated = 0
-        for r in await cur.fetchall():
-            if (r["full_name"], r["group_number"]) not in seen:
-                await db.execute(
-                    "UPDATE allowed_students SET is_active = 0 WHERE id = ?", (r["id"],)
-                )
-                deactivated += 1
+        gone |= {(r["full_name"], r["group_number"]) for r in await cur.fetchall()} - seen
+        for name, group in gone:
+            if await archive_student(db, name, group):
+                archived += 1
 
-        # Синхронизация users (только role='student')
+        # Аккаунты студентов из списка, отключённые старой схемой (is_active = 0), включаем
         cur = await db.execute(
-            "SELECT user_id, full_name, group_number, is_active FROM users "
-            "WHERE is_verified = 1 AND role = 'student'"
+            "SELECT user_id, full_name, group_number FROM users "
+            "WHERE is_verified = 1 AND role = 'student' AND is_active = 0"
         )
-        users_off = users_on = 0
+        users_on = 0
         for r in await cur.fetchall():
-            should = 1 if (r["full_name"], r["group_number"]) in seen else 0
-            if should != r["is_active"]:
-                await db.execute(
-                    "UPDATE users SET is_active = ? WHERE user_id = ?", (should, r["user_id"])
-                )
-                if should:
-                    users_on += 1
-                else:
-                    users_off += 1
+            if (r["full_name"], r["group_number"]) in seen:
+                await db.execute("UPDATE users SET is_active = 1 WHERE user_id = ?", (r["user_id"],))
+                users_on += 1
+
+        # Остатки старой схемы (is_active = 0 вне списка) тоже уходят в архив
+        archived += await archive_inactive(db)
 
         await db.commit()
 
         cur = await db.execute("SELECT COUNT(*) AS c FROM allowed_students WHERE is_active = 1")
         total_active = (await cur.fetchone())["c"]
-        cur = await db.execute("SELECT COUNT(*) AS c FROM allowed_students WHERE is_active = 0")
-        total_inactive = (await cur.fetchone())["c"]
+        cur = await db.execute(
+            "SELECT COUNT(*) AS c FROM (SELECT DISTINCT full_name, group_number FROM archived_students)"
+        )
+        total_archived = (await cur.fetchone())["c"]
 
     return {
         "added": added,
         "reactivated": reactivated,
+        "restored": restored,
         "kept": kept,
-        "deactivated": deactivated,
-        "users_off": users_off,
+        "archived": archived,
         "users_on": users_on,
         "total_active": total_active,
-        "total_inactive": total_inactive,
+        "total_archived": total_archived,
         "new_passwords": new_passwords,
         "skipped_parse": skipped,
     }

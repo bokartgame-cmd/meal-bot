@@ -13,6 +13,7 @@ from bot.keyboards import (
     get_start_menu_inline,
     get_cancel_inline,
 )
+from core.max_api import send_text_to_user
 from core.services import get_user_info, process_issuance
 
 logger = logging.getLogger(__name__)
@@ -31,8 +32,8 @@ async def notify_student(message: Message, result: dict):
         return
 
     try:
-        # Явное приведение к int и отправка сообщения
-        await message.bot.send_message(chat_id=int(student_id), text=STUDENT_MEAL_RECEIVED_TEXT)
+        # student_id — это user_id, а не chat_id: см. core/max_api.py
+        await send_text_to_user(message.bot, int(student_id), STUDENT_MEAL_RECEIVED_TEXT)
         logger.info(f"Уведомление успешно отправлено студенту {student_id}")
     except Exception as e:
         # Ловим ВСЕ исключения, чтобы не прерывать работу бота для сотрудника

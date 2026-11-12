@@ -9,6 +9,7 @@ venv/
 
 # Локальные данные
 data/*.db
+backups/
 logs/*.log
 
 # IDE

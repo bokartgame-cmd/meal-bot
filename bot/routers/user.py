@@ -1,6 +1,6 @@
 """MAX-бот: обработчики для студентов (регистрация с паролем, QR-карточка)"""
 import logging
-from aiogram import Router, F
+from aiogram import BaseMiddleware, Router, F
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
@@ -14,13 +14,39 @@ from bot.keyboards import (
     STUDENT_INACTIVE_TEXT,
     cancel_menu,
     get_qr_menu_inline,
+    get_restart_reg_inline,
     get_start_menu_inline,
 )
 from core.qr import generate_diplink, generate_qr_card_bytes
-from core.services import get_active_code, get_user_info, verify_student
+from core.archive import is_user_archived
+from core.services import get_active_code, get_user_info, save_user_chat_id, verify_student
 
 logger = logging.getLogger(__name__)
 router = Router(name="max_user")
+
+
+class RememberChatMiddleware(BaseMiddleware):
+    """Запоминает chat_id личного диалога пользователя: он нужен для уведомлений.
+
+    Сохраняем ПОСЛЕ обработчика, чтобы при регистрации запись в users уже существовала.
+    """
+
+    async def __call__(self, handler, event, data):
+        try:
+            return await handler(event, data)
+        finally:
+            try:
+                msg = event if isinstance(event, Message) else getattr(event, "message", None)
+                chat = getattr(msg, "chat", None)
+                user = getattr(event, "from_user", None)
+                if chat and user:
+                    await save_user_chat_id(user.id, chat.id)
+            except Exception as e:
+                logger.debug("Не удалось сохранить chat_id: %s", e)
+
+
+router.message.outer_middleware(RememberChatMiddleware())
+router.callback_query.outer_middleware(RememberChatMiddleware())
 
 # Глобальный словарь для хранения ID сообщений студентов
 # Структура: {user_id: {"qr_message_id": int, "received_message_id": int}}
@@ -54,6 +80,11 @@ async def cmd_start(message: Message, state: FSMContext):
     """Точка входа: регистрация, QR-карточка студента или меню сотрудника"""
     await state.clear()
     info = await get_user_info(message.from_user.id)
+
+    # Студент в архиве (практика, академ): аккаунт перенесён, регистрироваться заново не нужно
+    if not info and await is_user_archived(message.from_user.id):
+        await message.answer(STUDENT_INACTIVE_TEXT)
+        return
 
     # Незарегистрированный -> регистрация
     if not info or not info.get("is_verified"):

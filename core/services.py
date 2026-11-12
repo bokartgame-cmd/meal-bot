@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from datetime import datetime
 import pytz
-from config import DB_PATH, MOSCOW_TZ, ALLOWED_STAFF_ATTEMPTS, STAFF_COOLDOWN_SECONDS
+from config import DB_PATH, BOT_TZ, ALLOWED_STAFF_ATTEMPTS, STAFF_COOLDOWN_SECONDS
 
 # Исключаем визуально похожие символы: 0, O, 1, I, l
 SAFE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -28,7 +28,7 @@ def generate_unique_code(length: int = 6) -> str:
 
 async def get_active_code(user_id: int) -> str:
     """Возвращает актуальный код на сегодня. Пустая строка, если пользователь неактивен."""
-    today = datetime.now(pytz.timezone(MOSCOW_TZ)).strftime('%Y-%m-%d')
+    today = datetime.now(pytz.timezone(BOT_TZ)).strftime('%Y-%m-%d')
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
@@ -76,6 +76,10 @@ async def verify_student(user_id: int, full_name: str, group: str, password: str
         )
         allowed = await cur.fetchone()
         if not allowed:
+            # Студент в архиве (практика, академ) — это «приостановлено», а не «нет в списках»
+            from core.archive import is_name_archived
+            if await is_name_archived(db, norm_name, norm_group):
+                return {"status": "denied", "reason": "deactivated"}
             return {"status": "denied", "reason": "not_in_list"}
 
         # 2. Студент есть в истории, но НЕ в текущем списке получателей
@@ -112,7 +116,7 @@ async def verify_student(user_id: int, full_name: str, group: str, password: str
             if not await cur.fetchone():
                 break
 
-        today = datetime.now(pytz.timezone(MOSCOW_TZ)).strftime("%Y-%m-%d")
+        today = datetime.now(pytz.timezone(BOT_TZ)).strftime("%Y-%m-%d")
         if me:
             await db.execute(
                 """UPDATE users SET full_name = ?, group_number = ?, unique_code = ?,
@@ -160,7 +164,7 @@ async def process_issuance(code: str, issued_by: int, method: str) -> dict:
     :param issued_by: ID сотрудника (или админа), который совершает выдачу
     :param method: Способ выдачи ("qr" или "manual")
     """
-    today = datetime.now(pytz.timezone(MOSCOW_TZ)).strftime('%Y-%m-%d')
+    today = datetime.now(pytz.timezone(BOT_TZ)).strftime('%Y-%m-%d')
 
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -195,7 +199,7 @@ async def process_issuance(code: str, issued_by: int, method: str) -> dict:
         # 3. Записываем факт выдачи в лог
         await db.execute(
             "INSERT INTO meals_log (user_id, issued_at, issued_by, method) VALUES (?, ?, ?, ?)",
-            (user["user_id"], datetime.now(pytz.timezone(MOSCOW_TZ)), issued_by, method)
+            (user["user_id"], datetime.now(pytz.timezone(BOT_TZ)).replace(tzinfo=None), issued_by, method)
         )
         await db.commit()
 
@@ -269,17 +273,113 @@ async def get_user_info(user_id: int) -> dict | None:
         return dict(row) if row else None
 
 
+VALID_ROLES = ("student", "staff", "admin")
+
+# Имя/группа студента для отчётов: из users, а если студента перенесли в архив — из архива;
+# если архив очищен — подпись-заглушка (выдачи при этом остаются в общих итогах).
+_NAME_SQL = (
+    "COALESCE(u.full_name, (SELECT a.full_name FROM archived_students a "
+    "WHERE a.user_id = m.user_id LIMIT 1), 'Удалённый студент')"
+)
+_GROUP_SQL = (
+    "COALESCE(u.group_number, (SELECT a.group_number FROM archived_students a "
+    "WHERE a.user_id = m.user_id LIMIT 1), '—')"
+)
+
+
+async def set_user_role(user_id: int, role: str) -> dict:
+    """Назначить роль пользователю (для команды /set_role).
+
+    Возвращает {"status": "updated"|"created"|"not_found", "old_role": str | None}.
+    - Пользователь есть в БД: меняем роль; для staff/admin заодно подтверждаем
+      и активируем его (как в set_role.py). При понижении до student флаги не трогаем,
+      чтобы случайно не реактивировать исключённого студента.
+    - Пользователя нет: для staff/admin создаём служебную запись (как в set_role.py);
+      для student создавать нечего — студент появляется через регистрацию.
+    """
+    if role not in VALID_ROLES:
+        raise ValueError(f"Недопустимая роль: {role!r}")
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT role FROM users WHERE user_id = ?", (user_id,))
+        row = await cur.fetchone()
+
+        if row:
+            if role == "student":
+                await db.execute("UPDATE users SET role = ? WHERE user_id = ?", (role, user_id))
+            else:
+                await db.execute(
+                    "UPDATE users SET role = ?, is_verified = 1, is_active = 1 WHERE user_id = ?",
+                    (role, user_id),
+                )
+            await db.commit()
+            return {"status": "updated", "old_role": row[0]}
+
+        if role == "student":
+            return {"status": "not_found", "old_role": None}
+
+        await db.execute(
+            """INSERT INTO users (user_id, full_name, group_number, unique_code,
+                   is_verified, is_active, role)
+               VALUES (?, 'service account', 'service', ?, 1, 1, ?)""",
+            (user_id, generate_unique_code(), role),
+        )
+        await db.commit()
+        return {"status": "created", "old_role": None}
+
+
+async def save_user_chat_id(user_id: int, chat_id: int) -> None:
+    """Запомнить chat_id личного диалога пользователя с ботом (нужен для уведомлений)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET chat_id = ? WHERE user_id = ? AND (chat_id IS NULL OR chat_id != ?)",
+            (int(chat_id), int(user_id), int(chat_id)),
+        )
+        await db.commit()
+
+
+async def get_students_for_daily_qr(today: str) -> list:
+    """Студенты, которым сегодня ещё не отправлен QR: активные, прошедшие регистрацию,
+    с известным chat_id личного диалога. Возвращает [{"user_id", "chat_id"}, ...]"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT user_id, chat_id FROM users
+               WHERE role = 'student' AND is_verified = 1 AND is_active = 1
+                 AND chat_id IS NOT NULL
+                 AND (qr_sent_date IS NULL OR qr_sent_date != ?)""",
+            (today,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def count_students_without_chat(today: str) -> int:
+    """Сколько активных студентов нельзя охватить рассылкой (chat_id ещё неизвестен)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """SELECT COUNT(*) FROM users
+               WHERE role = 'student' AND is_verified = 1 AND is_active = 1
+                 AND chat_id IS NULL""")
+        return (await cur.fetchone())[0]
+
+
+async def mark_qr_sent(user_id: int, today: str) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET qr_sent_date = ? WHERE user_id = ?", (today, user_id))
+        await db.commit()
+
+
 async def get_daily_report(date_str: str = None) -> list:
     """Получить отчет о выдачах за указанную дату (или сегодня)"""
     if not date_str:
-        date_str = datetime.now(pytz.timezone(MOSCOW_TZ)).strftime('%Y-%m-%d')
+        date_str = datetime.now(pytz.timezone(BOT_TZ)).strftime('%Y-%m-%d')
 
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            """SELECT m.issued_at, u.full_name, u.group_number, m.method
+            f"""SELECT m.issued_at, {_NAME_SQL} AS full_name, {_GROUP_SQL} AS group_number, m.method
                FROM meals_log m
-               JOIN users u ON m.user_id = u.user_id
+               LEFT JOIN users u ON m.user_id = u.user_id
                WHERE DATE(m.issued_at) = ?
                ORDER BY m.issued_at""",
             (date_str,)
@@ -289,7 +389,7 @@ async def get_daily_report(date_str: str = None) -> list:
 
 async def get_today_stats() -> dict:
     """Задаток для будущей кнопки «Сегодня»: статистика выдач за текущий день"""
-    now = datetime.now(pytz.timezone(MOSCOW_TZ))
+    now = datetime.now(pytz.timezone(BOT_TZ))
     today = now.strftime("%Y-%m-%d")
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
@@ -325,17 +425,17 @@ def parse_date(s: str):
 
 
 def period_last_week():
-    today = datetime.now(pytz.timezone(MOSCOW_TZ)).date()
+    today = datetime.now(pytz.timezone(BOT_TZ)).date()
     return (today - timedelta(days=6)).isoformat(), today.isoformat()
 
 
 def period_last_month():
-    today = datetime.now(pytz.timezone(MOSCOW_TZ)).date()
+    today = datetime.now(pytz.timezone(BOT_TZ)).date()
     return (today - timedelta(days=29)).isoformat(), today.isoformat()
 
 
 def period_last_year():
-    today = datetime.now(pytz.timezone(MOSCOW_TZ)).date()
+    today = datetime.now(pytz.timezone(BOT_TZ)).date()
     return (today - timedelta(days=364)).isoformat(), today.isoformat()
 
 
@@ -348,13 +448,13 @@ async def get_stats_for_period(from_date: str, to_date: str) -> dict:
 
         # 1. Детальная таблица: кто сколько получил
         cur = await db.execute(
-            """
-            SELECT u.full_name, u.group_number, COUNT(*) AS cnt
+            f"""
+            SELECT {_NAME_SQL} AS full_name, {_GROUP_SQL} AS group_number, COUNT(*) AS cnt
             FROM meals_log m
-            JOIN users u ON u.user_id = m.user_id
+            LEFT JOIN users u ON u.user_id = m.user_id
             WHERE DATE(m.issued_at) BETWEEN ? AND ?
             GROUP BY m.user_id
-            ORDER BY cnt DESC, u.full_name
+            ORDER BY cnt DESC, full_name
             """,
             (from_date, to_date),
         )
