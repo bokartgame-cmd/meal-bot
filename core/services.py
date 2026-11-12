@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from datetime import datetime
 import pytz
-from config import DB_PATH, MOSCOW_TZ, ALLOWED_STAFF_ATTEMPTS, STAFF_COOLDOWN_SECONDS
+from config import DB_PATH, BOT_TZ, ALLOWED_STAFF_ATTEMPTS, STAFF_COOLDOWN_SECONDS
 
 # Исключаем визуально похожие символы: 0, O, 1, I, l
 SAFE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -28,7 +28,7 @@ def generate_unique_code(length: int = 6) -> str:
 
 async def get_active_code(user_id: int) -> str:
     """Возвращает актуальный код на сегодня. Пустая строка, если пользователь неактивен."""
-    today = datetime.now(pytz.timezone(MOSCOW_TZ)).strftime('%Y-%m-%d')
+    today = datetime.now(pytz.timezone(BOT_TZ)).strftime('%Y-%m-%d')
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
@@ -112,7 +112,7 @@ async def verify_student(user_id: int, full_name: str, group: str, password: str
             if not await cur.fetchone():
                 break
 
-        today = datetime.now(pytz.timezone(MOSCOW_TZ)).strftime("%Y-%m-%d")
+        today = datetime.now(pytz.timezone(BOT_TZ)).strftime("%Y-%m-%d")
         if me:
             await db.execute(
                 """UPDATE users SET full_name = ?, group_number = ?, unique_code = ?,
@@ -160,7 +160,7 @@ async def process_issuance(code: str, issued_by: int, method: str) -> dict:
     :param issued_by: ID сотрудника (или админа), который совершает выдачу
     :param method: Способ выдачи ("qr" или "manual")
     """
-    today = datetime.now(pytz.timezone(MOSCOW_TZ)).strftime('%Y-%m-%d')
+    today = datetime.now(pytz.timezone(BOT_TZ)).strftime('%Y-%m-%d')
 
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -195,7 +195,7 @@ async def process_issuance(code: str, issued_by: int, method: str) -> dict:
         # 3. Записываем факт выдачи в лог
         await db.execute(
             "INSERT INTO meals_log (user_id, issued_at, issued_by, method) VALUES (?, ?, ?, ?)",
-            (user["user_id"], datetime.now(pytz.timezone(MOSCOW_TZ)), issued_by, method)
+            (user["user_id"], datetime.now(pytz.timezone(BOT_TZ)).replace(tzinfo=None), issued_by, method)
         )
         await db.commit()
 
@@ -357,7 +357,7 @@ async def mark_qr_sent(user_id: int, today: str) -> None:
 async def get_daily_report(date_str: str = None) -> list:
     """Получить отчет о выдачах за указанную дату (или сегодня)"""
     if not date_str:
-        date_str = datetime.now(pytz.timezone(MOSCOW_TZ)).strftime('%Y-%m-%d')
+        date_str = datetime.now(pytz.timezone(BOT_TZ)).strftime('%Y-%m-%d')
 
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -374,7 +374,7 @@ async def get_daily_report(date_str: str = None) -> list:
 
 async def get_today_stats() -> dict:
     """Задаток для будущей кнопки «Сегодня»: статистика выдач за текущий день"""
-    now = datetime.now(pytz.timezone(MOSCOW_TZ))
+    now = datetime.now(pytz.timezone(BOT_TZ))
     today = now.strftime("%Y-%m-%d")
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
@@ -410,17 +410,17 @@ def parse_date(s: str):
 
 
 def period_last_week():
-    today = datetime.now(pytz.timezone(MOSCOW_TZ)).date()
+    today = datetime.now(pytz.timezone(BOT_TZ)).date()
     return (today - timedelta(days=6)).isoformat(), today.isoformat()
 
 
 def period_last_month():
-    today = datetime.now(pytz.timezone(MOSCOW_TZ)).date()
+    today = datetime.now(pytz.timezone(BOT_TZ)).date()
     return (today - timedelta(days=29)).isoformat(), today.isoformat()
 
 
 def period_last_year():
-    today = datetime.now(pytz.timezone(MOSCOW_TZ)).date()
+    today = datetime.now(pytz.timezone(BOT_TZ)).date()
     return (today - timedelta(days=364)).isoformat(), today.isoformat()
 
 

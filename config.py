@@ -18,8 +18,9 @@ MAX_BOT_NAME = os.getenv("MAX_BOT_NAME", "")
 MAX_API_BASE_URL = os.getenv("MAX_API_BASE_URL", "https://platform-api.max.ru").rstrip("/")
 
 # === Общие настройки ===
-MOSCOW_TZ = "Europe/Moscow"
-# Ежедневная автоматическая рассылка QR-кодов студентам (время по MOSCOW_TZ)
+# Часовой пояс бота (Владивосток, UTC+10): по нему считаются «сегодня», коды на день, отчёты и рассылка
+BOT_TZ = os.getenv("BOT_TZ", "Asia/Vladivostok")
+# Ежедневная автоматическая рассылка QR-кодов студентам (время по BOT_TZ)
 DAILY_QR_ENABLED = os.getenv("DAILY_QR_ENABLED", "1").lower() not in ("0", "false", "no", "off")
 DAILY_QR_HOUR = int(os.getenv("DAILY_QR_HOUR", "6"))
 DAILY_QR_MINUTE = int(os.getenv("DAILY_QR_MINUTE", "0"))

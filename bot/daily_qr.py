@@ -1,7 +1,7 @@
 """Ежедневная автоматическая рассылка QR-карточек студентам.
 
 Фоновая задача раз в минуту проверяет: наступило ли время рассылки (config.DAILY_QR_HOUR:MINUTE
-по MOSCOW_TZ) и есть ли студенты, которым сегодня QR ещё не отправлен (users.qr_sent_date).
+по BOT_TZ) и есть ли студенты, которым сегодня QR ещё не отправлен (users.qr_sent_date).
 Это даёт:
 - идемпотентность: повторные проверки и перезапуск бота не приводят к дублям;
 - «догон»: если бот был выключен в момент рассылки, QR уйдут сразу после запуска (в тот же день).
@@ -35,11 +35,11 @@ SEND_PAUSE_SECONDS = 0.1  # небольшая пауза между отпра�
 
 
 def _today() -> str:
-    return datetime.now(pytz.timezone(config.MOSCOW_TZ)).strftime("%Y-%m-%d")
+    return datetime.now(pytz.timezone(config.BOT_TZ)).strftime("%Y-%m-%d")
 
 
 def _is_send_time() -> bool:
-    now = datetime.now(pytz.timezone(config.MOSCOW_TZ))
+    now = datetime.now(pytz.timezone(config.BOT_TZ))
     return (now.hour, now.minute) >= (config.DAILY_QR_HOUR, config.DAILY_QR_MINUTE)
 
 
@@ -96,7 +96,7 @@ async def send_daily_qr(bot: Bot, failed_today: set) -> tuple:
 async def daily_qr_loop(bot: Bot) -> None:
     """Бесконечный цикл рассылки. Запускается из bot/main.py фоновой задачей."""
     logger.info("📅 Ежедневная рассылка QR включена: %02d:%02d (%s)",
-                config.DAILY_QR_HOUR, config.DAILY_QR_MINUTE, config.MOSCOW_TZ)
+                config.DAILY_QR_HOUR, config.DAILY_QR_MINUTE, config.BOT_TZ)
     failed_today: set = set()
     failed_date = _today()
     while True:
