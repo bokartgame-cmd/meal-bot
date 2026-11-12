@@ -14,6 +14,7 @@ from bot.keyboards import (
     STUDENT_INACTIVE_TEXT,
     cancel_menu,
     get_qr_menu_inline,
+    get_restart_reg_inline,
     get_start_menu_inline,
 )
 from core.qr import generate_diplink, generate_qr_card_bytes
