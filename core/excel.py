@@ -27,7 +27,7 @@ def build_stats_excel(from_date: str, to_date: str, stats: dict) -> BytesIO:
     )
 
     # Заголовок отчёта
-    ws.merge_cells("A1:C1")
+    ws.merge_cells("A1:G1")
     ws["A1"] = f"Отчёт о выдачах питания за период: с {from_date} по {to_date}"
     ws["A1"].font = title_font
     ws["A1"].alignment = Alignment(horizontal="left")
@@ -36,12 +36,13 @@ def build_stats_excel(from_date: str, to_date: str, stats: dict) -> BytesIO:
     row_num = 3
 
     # Заголовки таблицы
-    headers = ["№", "ФИО студента", "Группа", "Обедов получено"]
+    headers = ["№", "ФИО студента", "Группа", "Обедов получено",
+               "Время получения: мин.", "Время получения: среднее", "Время получения: макс."]
     for col_idx, header in enumerate(headers, start=1):
         cell = ws.cell(row=row_num, column=col_idx, value=header)
         cell.font = header_font
         cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center")
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
         cell.border = thin_border
     row_num += 1
 
@@ -53,6 +54,10 @@ def build_stats_excel(from_date: str, to_date: str, stats: dict) -> BytesIO:
             ws.cell(row=row_num, column=2, value=r["full_name"]).border = thin_border
             ws.cell(row=row_num, column=3, value=r["group_number"]).border = thin_border
             ws.cell(row=row_num, column=4, value=r["cnt"]).border = thin_border
+            for col, key in ((5, "t_min"), (6, "t_avg"), (7, "t_max")):
+                cell = ws.cell(row=row_num, column=col, value=r.get(key, "—"))
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center")
             row_num += 1
     else:
         ws.cell(row=row_num, column=1, value="(нет выдач за период)")
@@ -75,11 +80,45 @@ def build_stats_excel(from_date: str, to_date: str, stats: dict) -> BytesIO:
         ws.cell(row=row_num, column=4, value=value).font = summary_font
         row_num += 1
 
+    # Время получения по ВСЕМ студентам (те же три числа, что и в таблице по каждому)
+    time_all = stats.get("time_all") or {"t_min": "—", "t_avg": "—", "t_max": "—"}
+    for label, key in (
+        ("Время получения (все студенты) — минимальное:", "t_min"),
+        ("Время получения (все студенты) — среднее:", "t_avg"),
+        ("Время получения (все студенты) — максимальное:", "t_max"),
+    ):
+        cell_label = ws.cell(row=row_num, column=1, value=label)
+        cell_label.font = summary_font
+        ws.merge_cells(start_row=row_num, start_column=1, end_row=row_num, end_column=3)
+        value_cell = ws.cell(row=row_num, column=4, value=time_all[key])
+        value_cell.font = summary_font
+        value_cell.alignment = Alignment(horizontal="right")
+        row_num += 1
+
+    # Оценки получения обеда студентами (1–5), если есть
+    ratings = stats.get("ratings")
+    if ratings:
+        avg = ratings.get("avg")
+        for label, value in (
+            ("Средняя оценка получения обеда (1–5):", avg if avg is not None else "—"),
+            ("Количество оценок:", ratings.get("count", 0)),
+        ):
+            cell_label = ws.cell(row=row_num, column=1, value=label)
+            cell_label.font = summary_font
+            ws.merge_cells(start_row=row_num, start_column=1, end_row=row_num, end_column=3)
+            value_cell = ws.cell(row=row_num, column=4, value=value)
+            value_cell.font = summary_font
+            value_cell.alignment = Alignment(horizontal="right")
+            row_num += 1
+
     # Ширины колонок
     ws.column_dimensions["A"].width = 6
     ws.column_dimensions["B"].width = 38
     ws.column_dimensions["C"].width = 14
     ws.column_dimensions["D"].width = 20
+    for col in ("E", "F", "G"):
+        ws.column_dimensions[col].width = 16
+    ws.row_dimensions[3].height = 32  # заголовки таблицы в две строки
 
     # Сохраняем в память
     buffer = BytesIO()

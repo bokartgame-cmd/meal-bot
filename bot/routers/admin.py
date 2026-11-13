@@ -1,4 +1,5 @@
 """MAX-бот: Обработчики для администратора (статистика и импорт)"""
+import asyncio
 import logging
 import tempfile
 from datetime import datetime
@@ -15,12 +16,15 @@ from bot.keyboards import (
     CB_ADMIN_STATS,
     CB_ADMIN_ARCHIVE,
     CB_ADMIN_IMPORT,
+    CB_ADMIN_RESTART,
     CB_ARCHIVE_CANCEL,
     CB_ARCHIVE_CLEAR_ALL,
     CB_ARCHIVE_CLEAR_OLD,
     CB_ARCHIVE_CONFIRM_ALL,
     CB_ARCHIVE_CONFIRM_OLD,
     CB_CANCEL,
+    CB_RESTART_CANCEL,
+    CB_RESTART_CONFIRM,
     CB_STATS_CUSTOM,
     CB_STATS_MONTH,
     CB_STATS_WEEK,
@@ -29,14 +33,23 @@ from bot.keyboards import (
     get_archive_confirm_inline,
     get_archive_menu_inline,
     get_cancel_inline,
+    get_restart_confirm_inline,
     get_start_menu_inline,
     get_stats_period_inline,
 )
 import config
 from core.archive import clear_archive, count_archived
 from core.excel import build_stats_excel, build_passwords_excel
+from core.feedback import get_rating_stats
 from core.importer import import_students_from_file
 from core.max_api import send_text_to_user
+from core.restart import (
+    make_token,
+    restart_process,
+    restart_supported,
+    save_restart_notice,
+    token_state,
+)
 from core.services import (
     VALID_ROLES,
     get_stats_for_period,
@@ -64,6 +77,7 @@ async def _require_admin(callback_or_message, user_id: int) -> bool:
 async def send_stats(message: Message, from_date: str, to_date: str):
     """Формирование и отправка Excel-файла"""
     stats = await get_stats_for_period(from_date, to_date)
+    stats["ratings"] = await get_rating_stats(from_date, to_date)
     buffer = build_stats_excel(from_date, to_date, stats)
     filename = f"stats_{from_date}_{to_date}.xlsx"
     file = BufferedInputFile(buffer.read(), filename=filename)
@@ -74,6 +88,15 @@ async def send_stats(message: Message, from_date: str, to_date: str):
         f"✅ Активных получили ≥1: {stats['active_got']} из {stats['active_total']}\n"
         f"❌ Активных не получили ни одного: {stats['active_not_got']}"
     )
+    time_all = stats.get("time_all")
+    if time_all:
+        caption += (
+            f"\n🕐 Время получения (все студенты): "
+            f"мин. {time_all['t_min']}, среднее {time_all['t_avg']}, макс. {time_all['t_max']}"
+        )
+    ratings = stats["ratings"]
+    if ratings["count"]:
+        caption += f"\n⭐ Средняя оценка получения: {ratings['avg']} (оценок: {ratings['count']})"
 
     # 🔧 ИСПРАВЛЕНИЕ: Разделяем отправку текста и документа, чтобы избежать 400 Bad Request от MAX API
     await message.answer(caption)
@@ -87,7 +110,7 @@ async def send_stats(message: Message, from_date: str, to_date: str):
 
 ROLE_LABELS = {"student": "студент", "staff": "сотрудник столовой", "admin": "администратор"}
 SET_ROLE_USAGE = (
-    "ℹ️ Использование: /set_role <id> <роль>\n"
+    "ℹ️ Использование: /set_role ID роль\n"
     "Роли: student, staff, admin\n"
     "Пример: /set_role 123456789 staff\n\n"
     "ID пользователя можно узнать командой /id (пользователь отправляет её боту сам)."
@@ -153,6 +176,69 @@ async def cmd_set_role(message: Message, command: CommandObject):
         report += "\n⚠️ Уведомить пользователя не удалось (возможно, он ещё не запускал бота)."
 
     await message.answer(report)
+
+
+# ====================
+# ПЕРЕЗАПУСК БОТА (с подтверждением)
+# ====================
+
+@router.callback_query(F.data == CB_ADMIN_RESTART)
+async def cb_admin_restart(callback: CallbackQuery, state: FSMContext):
+    """Шаг 1: запрос подтверждения"""
+    if not await _require_admin(callback, callback.from_user.id):
+        return
+    await callback.answer()
+    await state.clear()
+    if not restart_supported():
+        await callback.message.answer(
+            "⚠️ Перезапуск по кнопке недоступен: бот запущен не через run.py.\n"
+            "Запустите бота командой python run.py (в PyCharm — конфигурация с файлом run.py) "
+            "и повторите."
+        )
+        return
+    await _delete_quietly(callback.message)
+    await callback.message.answer(
+        "🔄 Перезапуск бота\n\n"
+        "Бот остановится и запустится заново — это занимает несколько секунд. "
+        "Сообщения, отправленные в этот момент, могут не обработаться. "
+        "Новый код (после обновления файлов) подхватится.\n\n"
+        "Перезапустить?",
+        reply_markup=get_restart_confirm_inline(make_token(CB_RESTART_CONFIRM)),
+    )
+
+
+@router.callback_query(F.data.startswith(CB_RESTART_CONFIRM + ":"))
+async def cb_restart_confirm(callback: CallbackQuery):
+    """Шаг 2: перезапуск после подтверждения"""
+    if not await _require_admin(callback, callback.from_user.id):
+        return
+    if token_state(callback.data) != "ok":
+        # устаревшее или повторно доставленное после рестарта нажатие — иначе бот перезапускался бы по кругу
+        await callback.answer("Кнопка устарела. Откройте перезапуск заново.", show_alert=True)
+        await _delete_quietly(callback.message)
+        return
+    await callback.answer()
+    logger.warning("Админ %s запросил перезапуск бота", callback.from_user.id)
+    save_restart_notice(callback.from_user.id)
+    try:
+        await callback.message.answer("🔄 Перезапускаю бота… Вернусь через несколько секунд.")
+    except Exception as e:
+        logger.warning("Не удалось отправить сообщение о перезапуске: %s", e)
+    await asyncio.sleep(1)  # даём сообщению уйти
+    try:
+        restart_process()
+    except Exception as e:  # перезапуск не удался — бот продолжает работать
+        logger.exception("Перезапуск не удался")
+        await callback.message.answer(f"❌ Перезапустить не удалось: {e}")
+
+
+@router.callback_query(F.data == CB_RESTART_CANCEL)
+async def cb_restart_cancel(callback: CallbackQuery):
+    if not await _require_admin(callback, callback.from_user.id):
+        return
+    await callback.answer()
+    await _delete_quietly(callback.message)
+    await callback.message.answer("Перезапуск отменён.", reply_markup=get_start_menu_inline(ROLE_ADMIN))
 
 
 # ====================

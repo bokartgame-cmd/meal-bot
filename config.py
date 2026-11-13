@@ -31,6 +31,11 @@ BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", "3"))
 BACKUP_KEEP = int(os.getenv("BACKUP_KEEP", "7"))
 # Архив неактивных студентов: «старым» считается запись, пролежавшая в архиве столько дней
 ARCHIVE_OLD_DAYS = int(os.getenv("ARCHIVE_OLD_DAYS", "365"))
+# Жалобы и предложения: лимит обращений от одного студента в сутки и максимальная длина текста
+FEEDBACK_DAILY_LIMIT = int(os.getenv("FEEDBACK_DAILY_LIMIT", "5"))
+FEEDBACK_MAX_LEN = int(os.getenv("FEEDBACK_MAX_LEN", "1000"))
+# Файл-пометка «кто попросил перезапуск»: после старта бот сообщает ему, что вернулся
+RESTART_NOTICE_PATH = BASE_DIR / "restart_notice.json"
 ALLOWED_STAFF_ATTEMPTS = 10
 STAFF_COOLDOWN_SECONDS = 60
 QR_PAYLOAD_MAX_LEN = 128

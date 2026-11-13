@@ -19,3 +19,7 @@ class AdminStats(StatesGroup):
 
 class AdminImport(StatesGroup):
     waiting_file = State()
+
+
+class StudentFeedback(StatesGroup):
+    waiting_text = State()
