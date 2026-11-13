@@ -84,6 +84,27 @@ async def get_recent_feedback(limit: int = 10) -> list:
         return [dict(r) for r in await cur.fetchall()]
 
 
+async def get_feedback_for_period(from_date: str, to_date: str) -> list:
+    """Все обращения, созданные в период [from_date, to_date], по порядку (для листа в Excel)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """SELECT f.id, f.kind, f.text, f.created_at, f.is_read,
+                      COALESCE(u.full_name,
+                               (SELECT a.full_name FROM archived_students a WHERE a.user_id = f.user_id LIMIT 1),
+                               'неизвестный') AS full_name,
+                      COALESCE(u.group_number,
+                               (SELECT a.group_number FROM archived_students a WHERE a.user_id = f.user_id LIMIT 1),
+                               '—') AS group_number
+               FROM feedback f
+               LEFT JOIN users u ON u.user_id = f.user_id
+               WHERE DATE(f.created_at) BETWEEN ? AND ?
+               ORDER BY f.created_at, f.id""",
+            (from_date, to_date),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
 async def mark_all_read() -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("UPDATE feedback SET is_read = 1 WHERE is_read = 0")

@@ -40,7 +40,7 @@ from bot.keyboards import (
 import config
 from core.archive import clear_archive, count_archived
 from core.excel import build_stats_excel, build_passwords_excel
-from core.feedback import get_rating_stats
+from core.feedback import get_feedback_for_period, get_rating_stats
 from core.importer import import_students_from_file
 from core.max_api import send_text_to_user
 from core.restart import (
@@ -78,6 +78,7 @@ async def send_stats(message: Message, from_date: str, to_date: str):
     """Формирование и отправка Excel-файла"""
     stats = await get_stats_for_period(from_date, to_date)
     stats["ratings"] = await get_rating_stats(from_date, to_date)
+    stats["feedback"] = await get_feedback_for_period(from_date, to_date)
     buffer = build_stats_excel(from_date, to_date, stats)
     filename = f"stats_{from_date}_{to_date}.xlsx"
     file = BufferedInputFile(buffer.read(), filename=filename)
@@ -94,6 +95,10 @@ async def send_stats(message: Message, from_date: str, to_date: str):
             f"\n🕐 Время получения (все студенты): "
             f"мин. {time_all['t_min']}, среднее {time_all['t_avg']}, макс. {time_all['t_max']}"
         )
+    if stats["feedback"]:
+        complaints = sum(1 for r in stats["feedback"] if r["kind"] == "complaint")
+        caption += (f"\n💬 Обращений за период: {len(stats['feedback'])} "
+                    f"(жалоб {complaints}, предложений {len(stats['feedback']) - complaints}) — на листе «Жалобы и предложения»")
     ratings = stats["ratings"]
     if ratings["count"]:
         caption += f"\n⭐ Средняя оценка получения: {ratings['avg']} (оценок: {ratings['count']})"
