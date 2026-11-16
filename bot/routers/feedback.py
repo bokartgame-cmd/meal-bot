@@ -170,12 +170,17 @@ async def process_feedback_text(message: Message, state: FSMContext):
     info = await get_user_info(user_id)
     logger.info("Обращение №%s (%s) от %s", feedback_id, kind, user_id)
 
-    # Ответ студенту и уведомление администраторов — независимые запросы, шлём одновременно
-    await asyncio.gather(
-        message.answer(
+    # Ответ студенту и уведомление администраторов — независимые запросы, шлём одновременно.
+    # message.answer() в aiogram возвращает не корутину, а нехешируемый объект метода,
+    # а asyncio.gather() требует хешируемые аргументы, поэтому оборачиваем вызов в корутину.
+    async def reply_to_student():
+        await message.answer(
             f"✅ Спасибо! Ваше обращение №{feedback_id} отправлено администратору.",
             reply_markup=get_qr_menu_inline(),
-        ),
+        )
+
+    await asyncio.gather(
+        reply_to_student(),
         _notify_admins(message, feedback_id, kind, info, text),
     )
 
