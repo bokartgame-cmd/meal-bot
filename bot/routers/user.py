@@ -80,6 +80,9 @@ def is_inactive_student(info) -> bool:
 
 REG_MSGS_KEY = "reg_msg_ids"
 REG_CANCELLED_TEXT = "Регистрация отменена, вы можете начать заново."
+REG_PROMPT_FULL_NAME = "Введите ваше ФИО полностью (как в списке деканата):"
+REG_PROMPT_GROUP = "Введите номер вашей группы (например, 28-143):"
+REG_PROMPT_PASSWORD = "Введите ваш личный пароль (6 символов, выдан вместе со списком):"
 
 
 async def _track(state: FSMContext, *items):
@@ -147,7 +150,7 @@ async def cb_restart_registration(callback: CallbackQuery, state: FSMContext):
     """Кнопка 'Начать заново' под сообщением об ошибке регистрации"""
     await state.clear()
     await callback.message.edit_text(
-        "Введите ваше ФИО полностью (как в списке деканата):",
+        REG_PROMPT_FULL_NAME,
         reply_markup=cancel_menu(),
     )
     await state.set_state(StudentRegistration.full_name)
@@ -178,28 +181,28 @@ async def reg_cancel(callback: CallbackQuery, state: FSMContext):
     F.data == CB_REG_BACK,
 )
 async def reg_back(callback: CallbackQuery, state: FSMContext):
-    """Шаг назад: удаляем текущий вопрос и ответ студента на предыдущий шаг;
-    предыдущий вопрос остаётся на экране и снова ждёт ввод"""
+    """Шаг назад: удаляем текущий вопрос, ответ студента и предыдущий вопрос,
+    затем отправляем предыдущий вопрос заново (внизу чата) и ждём ввод"""
     current = await state.get_state()
-    previous = (
-        StudentRegistration.full_name
-        if current == StudentRegistration.group_number.state
-        else StudentRegistration.group_number
-    )
+    if current == StudentRegistration.group_number.state:
+        previous, text, markup = StudentRegistration.full_name, REG_PROMPT_FULL_NAME, cancel_menu()
+    else:
+        previous, text, markup = StudentRegistration.group_number, REG_PROMPT_GROUP, reg_step_menu()
     data = await state.get_data()
     ids = list(data.get(REG_MSGS_KEY, []))
     cur_id = getattr(callback.message, "message_id", None)
-    # Хвост списка: [..., ответ студента на предыдущий шаг, текущий вопрос бота]
+    # Хвост списка: [..., предыдущий вопрос бота, ответ студента на него, текущий вопрос бота]
     if cur_id in ids:
-        pos = ids.index(cur_id)
-        to_delete = ids[max(pos - 1, 0):]
-        ids = ids[:max(pos - 1, 0)]
+        start = max(ids.index(cur_id) - 2, 0)
+        to_delete, ids = ids[start:], ids[:start]
     else:
         to_delete = [cur_id] if cur_id is not None else []
     await state.set_state(previous)
     await state.update_data(**{REG_MSGS_KEY: ids})
     chat_id = callback.message.chat.id
     await asyncio.gather(*(_delete_by_id(callback.bot, chat_id, mid) for mid in to_delete))
+    sent = await callback.message.answer(text, reply_markup=markup)
+    await _track(state, sent)
     await callback.answer()
 
 
@@ -207,7 +210,7 @@ async def reg_back(callback: CallbackQuery, state: FSMContext):
 async def process_full_name(message: Message, state: FSMContext):
     await state.update_data(full_name=message.text.strip())
     sent = await message.answer(
-        "Введите номер вашей группы (например, 28-143):",
+        REG_PROMPT_GROUP,
         reply_markup=reg_step_menu(),
     )
     await state.set_state(StudentRegistration.group_number)
@@ -218,7 +221,7 @@ async def process_full_name(message: Message, state: FSMContext):
 async def process_group_number(message: Message, state: FSMContext):
     await state.update_data(group_number=message.text.strip())
     sent = await message.answer(
-        "Введите ваш личный пароль (6 символов, выдан вместе со списком):",
+        REG_PROMPT_PASSWORD,
         reply_markup=reg_step_menu(),
     )
     await state.set_state(StudentRegistration.password)
