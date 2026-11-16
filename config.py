@@ -23,7 +23,7 @@ MAX_API_BASE_URL = os.getenv("MAX_API_BASE_URL", "https://platform-api.max.ru").
 BOT_TZ = os.getenv("BOT_TZ", "Asia/Vladivostok")
 # Ежедневная автоматическая рассылка QR-кодов студентам (время по BOT_TZ)
 DAILY_QR_ENABLED = os.getenv("DAILY_QR_ENABLED", "1").lower() not in ("0", "false", "no", "off")
-DAILY_QR_HOUR = int(os.getenv("DAILY_QR_HOUR", "9"))
+DAILY_QR_HOUR = int(os.getenv("DAILY_QR_HOUR", "10"))
 DAILY_QR_MINUTE = int(os.getenv("DAILY_QR_MINUTE", "0"))
 # Ежедневный бэкап БД (время по BOT_TZ); хранится BACKUP_KEEP последних копий (по одной на день)
 BACKUP_ENABLED = os.getenv("BACKUP_ENABLED", "1").lower() not in ("0", "false", "no", "off")
