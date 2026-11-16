@@ -81,14 +81,21 @@ async def cb_rate(callback: CallbackQuery):
 
     text = (
         f"{STUDENT_MEAL_RECEIVED_TEXT}\n\n"
-        f"Ваша оценка: {'⭐' * rating} Спасибо!\n"
+        f"✅ Оценка сохранена: {'⭐' * rating}\nСпасибо!\n\n"
         f"Есть жалоба или предложение? Напишите нам."
     )
+    # Оценка уже записана: убираем сообщение с кнопками 1–5 и присылаем новое с подтверждением
     try:
-        await callback.message.edit_text(text, reply_markup=get_after_rating_inline())
+        await callback.message.delete()
     except Exception as e:
-        logger.warning("Не удалось обновить сообщение с оценкой: %s", e)
-        await callback.message.answer(text, reply_markup=get_after_rating_inline())
+        # Не удалось удалить (например, повторное нажатие: сообщения уже нет) — правим на месте, без дубля
+        logger.warning("Не удалось удалить сообщение с оценкой: %s", e)
+        try:
+            await callback.message.edit_text(text, reply_markup=get_after_rating_inline())
+        except Exception as e2:
+            logger.warning("Не удалось обновить сообщение с оценкой: %s", e2)
+        return
+    await callback.message.answer(text, reply_markup=get_after_rating_inline())
 
 
 # ====================
