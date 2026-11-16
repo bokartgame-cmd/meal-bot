@@ -9,11 +9,13 @@ from bot.fsm import StudentRegistration
 from bot.keyboards import (
     CB_CANCEL,
     CB_HELP,
+    CB_REG_BACK,
     CB_RESTART_REG,
     CB_STUDENT_QR,
     STUDENT_HELP_TEXT,
     STUDENT_INACTIVE_TEXT,
     cancel_menu,
+    reg_step_menu,
     get_qr_menu_inline,
     get_restart_reg_inline,
     get_start_menu_inline,
@@ -171,12 +173,42 @@ async def reg_cancel(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.callback_query(
+    StateFilter(StudentRegistration.group_number, StudentRegistration.password),
+    F.data == CB_REG_BACK,
+)
+async def reg_back(callback: CallbackQuery, state: FSMContext):
+    """Шаг назад: удаляем текущий вопрос и ответ студента на предыдущий шаг;
+    предыдущий вопрос остаётся на экране и снова ждёт ввод"""
+    current = await state.get_state()
+    previous = (
+        StudentRegistration.full_name
+        if current == StudentRegistration.group_number.state
+        else StudentRegistration.group_number
+    )
+    data = await state.get_data()
+    ids = list(data.get(REG_MSGS_KEY, []))
+    cur_id = getattr(callback.message, "message_id", None)
+    # Хвост списка: [..., ответ студента на предыдущий шаг, текущий вопрос бота]
+    if cur_id in ids:
+        pos = ids.index(cur_id)
+        to_delete = ids[max(pos - 1, 0):]
+        ids = ids[:max(pos - 1, 0)]
+    else:
+        to_delete = [cur_id] if cur_id is not None else []
+    await state.set_state(previous)
+    await state.update_data(**{REG_MSGS_KEY: ids})
+    chat_id = callback.message.chat.id
+    await asyncio.gather(*(_delete_by_id(callback.bot, chat_id, mid) for mid in to_delete))
+    await callback.answer()
+
+
 @router.message(StudentRegistration.full_name, F.text)
 async def process_full_name(message: Message, state: FSMContext):
     await state.update_data(full_name=message.text.strip())
     sent = await message.answer(
         "Введите номер вашей группы (например, 28-143):",
-        reply_markup=cancel_menu(),
+        reply_markup=reg_step_menu(),
     )
     await state.set_state(StudentRegistration.group_number)
     await _track(state, message, sent)
@@ -187,7 +219,7 @@ async def process_group_number(message: Message, state: FSMContext):
     await state.update_data(group_number=message.text.strip())
     sent = await message.answer(
         "Введите ваш личный пароль (6 символов, выдан вместе со списком):",
-        reply_markup=cancel_menu(),
+        reply_markup=reg_step_menu(),
     )
     await state.set_state(StudentRegistration.password)
     await _track(state, message, sent)
