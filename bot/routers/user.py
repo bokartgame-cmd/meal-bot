@@ -1,4 +1,5 @@
 """MAX-бот: обработчики для студентов (регистрация с паролем, QR-карточка)"""
+import asyncio
 import logging
 from aiogram import BaseMiddleware, Router, F
 from aiogram.filters import Command, CommandStart, StateFilter
@@ -75,6 +76,29 @@ def is_inactive_student(info) -> bool:
     return bool(info) and info.get("role") == "student" and not info.get("is_active")
 
 
+REG_MSGS_KEY = "reg_msg_ids"
+REG_CANCELLED_TEXT = "Регистрация отменена, вы можете начать заново."
+
+
+async def _track(state: FSMContext, *items):
+    """Запоминаем сообщения шагов регистрации (объекты Message), чтобы удалить их при отмене"""
+    data = await state.get_data()
+    ids = list(data.get(REG_MSGS_KEY, []))
+    for item in items:
+        mid = getattr(item, "message_id", None)
+        if mid is not None and mid not in ids:
+            ids.append(mid)
+    await state.update_data(**{REG_MSGS_KEY: ids})
+
+
+async def _delete_by_id(bot, chat_id, message_id):
+    """Удаление сообщения по id; ошибки (уже удалено, нет прав) не должны ломать отмену"""
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception as e:
+        logger.debug("Не удалось удалить сообщение %s: %s", message_id, e)
+
+
 @router.message(CommandStart(deep_link=False))
 async def cmd_start(message: Message, state: FSMContext):
     """Точка входа: регистрация, QR-карточка студента или меню сотрудника"""
@@ -88,13 +112,14 @@ async def cmd_start(message: Message, state: FSMContext):
 
     # Незарегистрированный -> регистрация
     if not info or not info.get("is_verified"):
-        await message.answer(
+        sent = await message.answer(
             "👋 Добро пожаловать в бот питания!\n\n"
             "Для доступа к функциям необходимо пройти регистрацию.\n"
             "Введите ваше ФИО полностью (как в списке деканата):",
             reply_markup=cancel_menu(),
         )
         await state.set_state(StudentRegistration.full_name)
+        await _track(state, message, sent)
         return
 
     # 🔒 Неактивный студент — только сообщение-предупреждение
@@ -124,6 +149,7 @@ async def cb_restart_registration(callback: CallbackQuery, state: FSMContext):
         reply_markup=cancel_menu(),
     )
     await state.set_state(StudentRegistration.full_name)
+    await _track(state, callback.message)
     await callback.answer()
 
 
@@ -132,30 +158,39 @@ async def cb_restart_registration(callback: CallbackQuery, state: FSMContext):
     F.data == CB_CANCEL,
 )
 async def reg_cancel(callback: CallbackQuery, state: FSMContext):
-    """Отмена регистрации через inline-кнопку"""
+    """Отмена регистрации: удаляем все сообщения шагов (и бота, и студента), присылаем итог с кнопкой"""
+    data = await state.get_data()
+    ids = list(data.get(REG_MSGS_KEY, []))
     await state.clear()
-    await callback.message.edit_text("Регистрация отменена.", reply_markup=None)
+    cur_id = getattr(callback.message, "message_id", None)
+    if cur_id is not None and cur_id not in ids:
+        ids.append(cur_id)
+    chat_id = callback.message.chat.id
+    await asyncio.gather(*(_delete_by_id(callback.bot, chat_id, mid) for mid in ids))
+    await callback.message.answer(REG_CANCELLED_TEXT, reply_markup=get_restart_reg_inline())
     await callback.answer()
 
 
 @router.message(StudentRegistration.full_name, F.text)
 async def process_full_name(message: Message, state: FSMContext):
     await state.update_data(full_name=message.text.strip())
-    await message.answer(
+    sent = await message.answer(
         "Введите номер вашей группы (например, 28-143):",
         reply_markup=cancel_menu(),
     )
     await state.set_state(StudentRegistration.group_number)
+    await _track(state, message, sent)
 
 
 @router.message(StudentRegistration.group_number, F.text)
 async def process_group_number(message: Message, state: FSMContext):
     await state.update_data(group_number=message.text.strip())
-    await message.answer(
+    sent = await message.answer(
         "Введите ваш личный пароль (6 символов, выдан вместе со списком):",
         reply_markup=cancel_menu(),
     )
     await state.set_state(StudentRegistration.password)
+    await _track(state, message, sent)
 
 
 @router.message(StudentRegistration.password, F.text)
