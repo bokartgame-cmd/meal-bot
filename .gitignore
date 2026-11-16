@@ -10,6 +10,7 @@ venv/
 # Локальные данные
 data/*.db
 backups/
+restart_notice.json
 logs/*.log
 
 # IDE

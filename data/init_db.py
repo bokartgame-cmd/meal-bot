@@ -45,6 +45,23 @@ CREATE TABLE IF NOT EXISTS archived_students (
 );
 CREATE INDEX IF NOT EXISTS idx_archived_name ON archived_students(full_name, group_number);
 CREATE INDEX IF NOT EXISTS idx_archived_user ON archived_students(user_id);
+-- Жалобы и предложения студентов
+CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id BIGINT NOT NULL,
+    kind TEXT NOT NULL,                 -- 'complaint' | 'suggestion'
+    text TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    is_read INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_user_date ON feedback(user_id, created_at);
+-- Оценка студентом удобства получения обеда (1-5), одна на выдачу
+CREATE TABLE IF NOT EXISTS meal_ratings (
+    meal_id INTEGER PRIMARY KEY,        -- meals_log.id
+    user_id BIGINT NOT NULL,
+    rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    rated_at TIMESTAMP NOT NULL
+);
 """
 
 async def ensure_column(db, table: str, column: str, definition: str):

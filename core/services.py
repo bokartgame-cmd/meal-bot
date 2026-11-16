@@ -197,10 +197,11 @@ async def process_issuance(code: str, issued_by: int, method: str) -> dict:
             }
 
         # 3. Записываем факт выдачи в лог
-        await db.execute(
+        cur = await db.execute(
             "INSERT INTO meals_log (user_id, issued_at, issued_by, method) VALUES (?, ?, ?, ?)",
             (user["user_id"], datetime.now(pytz.timezone(BOT_TZ)).replace(tzinfo=None), issued_by, method)
         )
+        meal_id = cur.lastrowid
         await db.commit()
 
         # 🔧 Форматируем имя и группу для красивого вывода при успехе
@@ -210,7 +211,8 @@ async def process_issuance(code: str, issued_by: int, method: str) -> dict:
         return {
             "status": "success",
             "message": f"✅ Выдано: {display_name} ({display_group})",
-            "student_user_id": int(user["user_id"])
+            "student_user_id": int(user["user_id"]),
+            "meal_id": int(meal_id),
         }
 
 
@@ -439,6 +441,41 @@ def period_last_year():
     return (today - timedelta(days=364)).isoformat(), today.isoformat()
 
 
+def _issue_minutes(value) -> Optional[int]:
+    """Время получения как число минут от полуночи (по времени бота).
+    Новые записи хранятся как местное время без смещения; у старых есть смещение (+03:00) —
+    их приводим к часовому поясу бота."""
+    s = str(value or "").strip()
+    if len(s) < 16:
+        return None
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(pytz.timezone(BOT_TZ))
+        return dt.hour * 60 + dt.minute
+    except ValueError:
+        try:
+            return int(s[11:13]) * 60 + int(s[14:16])
+        except ValueError:
+            return None
+
+
+def _fmt_minutes(minutes: float) -> str:
+    m = min(int(round(minutes)), 24 * 60 - 1)
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def _time_summary(minutes: list) -> Optional[dict]:
+    """Минимальное, среднее и максимальное время получения (ЧЧ:ММ)"""
+    if not minutes:
+        return None
+    return {
+        "t_min": _fmt_minutes(min(minutes)),
+        "t_avg": _fmt_minutes(sum(minutes) / len(minutes)),
+        "t_max": _fmt_minutes(max(minutes)),
+    }
+
+
 async def get_stats_for_period(from_date: str, to_date: str) -> dict:
     """
     Статистика выдач за период [from_date, to_date] (включительно).
@@ -449,7 +486,8 @@ async def get_stats_for_period(from_date: str, to_date: str) -> dict:
         # 1. Детальная таблица: кто сколько получил
         cur = await db.execute(
             f"""
-            SELECT {_NAME_SQL} AS full_name, {_GROUP_SQL} AS group_number, COUNT(*) AS cnt
+            SELECT m.user_id AS user_id, {_NAME_SQL} AS full_name,
+                   {_GROUP_SQL} AS group_number, COUNT(*) AS cnt
             FROM meals_log m
             LEFT JOIN users u ON u.user_id = m.user_id
             WHERE DATE(m.issued_at) BETWEEN ? AND ?
@@ -459,6 +497,22 @@ async def get_stats_for_period(from_date: str, to_date: str) -> dict:
             (from_date, to_date),
         )
         rows = [dict(r) for r in await cur.fetchall()]
+
+        # 1.1. Время получения: min / среднее / max по каждому студенту и по всем выдачам
+        cur = await db.execute(
+            "SELECT user_id, issued_at FROM meals_log WHERE DATE(issued_at) BETWEEN ? AND ?",
+            (from_date, to_date),
+        )
+        per_user, all_minutes = {}, []
+        for r in await cur.fetchall():
+            mins = _issue_minutes(r["issued_at"])
+            if mins is not None:
+                per_user.setdefault(r["user_id"], []).append(mins)
+                all_minutes.append(mins)
+        for row in rows:
+            row.update(_time_summary(per_user.get(row["user_id"])) or
+                       {"t_min": "—", "t_avg": "—", "t_max": "—"})
+        time_all = _time_summary(all_minutes)
 
         # 2. Общее количество выданных обедов
         cur = await db.execute(
@@ -492,4 +546,5 @@ async def get_stats_for_period(from_date: str, to_date: str) -> dict:
             "active_got": active_got,
             "active_not_got": active_total - active_got,
             "active_total": active_total,
+            "time_all": time_all,  # {"t_min", "t_avg", "t_max"} или None, если выдач не было
         }

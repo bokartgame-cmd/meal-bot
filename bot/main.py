@@ -7,16 +7,32 @@ from aiogram.enums import ParseMode
 from aiogram_max import create_bot
 import config
 from data.init_db import init_db
-from bot.routers import user, staff, admin
+from bot.routers import user, staff, admin, feedback
 from bot.daily_qr import daily_qr_loop
 from core.archive import archive_inactive_students
+from bot.keyboards import ROLE_ADMIN, get_start_menu_inline
 from core.backup import backup_loop, ensure_backup_today
+from core.max_api import send_text_to_user
+from core.restart import pop_restart_notice
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+async def announce_restart(bot):
+    """Если бот перезапущен по кнопке администратора — сообщаем ему, что всё снова работает"""
+    admin_id = pop_restart_notice()
+    if not admin_id:
+        return
+    try:
+        await send_text_to_user(bot, admin_id, "✅ Бот перезапущен и снова работает.",
+                                get_start_menu_inline(ROLE_ADMIN))
+    except Exception as e:
+        logger.warning("Не удалось сообщить администратору %s о перезапуске: %s", admin_id, e)
+
 
 async def main():
     if not config.MAX_BOT_TOKEN:
@@ -52,10 +68,10 @@ async def main():
 
     # 4. Запуск polling (admin первым, чтобы его callback'и перехватывались раньше)
     dp = Dispatcher()
-    dp.include_routers(admin.router, staff.router, user.router)
+    dp.include_routers(admin.router, staff.router, feedback.router, user.router)
 
     # 5. Фоновые задачи: ежедневная рассылка QR и бэкап БД (polling не затрагивают)
-    bg_tasks = []
+    bg_tasks = [asyncio.create_task(announce_restart(bot))]
     if config.DAILY_QR_ENABLED:
         bg_tasks.append(asyncio.create_task(daily_qr_loop(bot)))
     if config.BACKUP_ENABLED:
