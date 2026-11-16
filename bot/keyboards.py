@@ -12,6 +12,7 @@ STAFF_BTN_CODE = "✍️ Ввести код вручную"
 ADMIN_BTN_STATS = "📊 Статистика"
 BTN_HELP = "📖 Инструкция"
 BTN_CANCEL = "❌ Отмена"
+BTN_REG_BACK = "⬅️ Вернуться к предыдущему шагу"
 BTN_RESTART_REG = "🔄 Начать заново"
 ADMIN_BTN_IMPORT = "📥 Импорт студентов"
 ADMIN_BTN_ARCHIVE = "🗄 Архив студентов"
@@ -32,6 +33,7 @@ CB_STUDENT_QR = "student_qr"
 CB_STAFF_CODE = "staff_code"
 CB_HELP = "help"
 CB_CANCEL = "cancel"
+CB_REG_BACK = "reg_back"
 CB_RESTART_REG = "restart_reg"
 
 CB_ADMIN_STATS = "admin_stats"
@@ -203,6 +205,16 @@ def cancel_menu() -> InlineKeyboardMarkup:
     """Inline-кнопка отмены для FSM-регистрации студента"""
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_CANCEL)]]
+    )
+
+
+def reg_step_menu() -> InlineKeyboardMarkup:
+    """Шаги регистрации со 2-го: «Вернуться к предыдущему шагу» и «Отмена»"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=BTN_REG_BACK, callback_data=CB_REG_BACK)],
+            [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_CANCEL)],
+        ]
     )
 
 
