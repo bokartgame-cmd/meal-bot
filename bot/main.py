@@ -39,15 +39,16 @@ async def main():
         logger.error("MAX_BOT_TOKEN не задан в config.py")
         return
 
-    # 1. Инициализация БД
-    await init_db()
-
-    # 1.1. Страховка перед переносом неактивных студентов в архив: бэкап на сегодня (если его ещё нет)
-    if config.BACKUP_ENABLED:
+    # 1. Страховка перед миграциями (перенос персонала в staff_users, архив неактивных студентов):
+    #    бэкап на сегодня, если БД уже существует и копии за сегодня ещё нет
+    if config.BACKUP_ENABLED and config.DB_PATH.exists():
         try:
             await ensure_backup_today()
         except Exception:
             logger.exception("Не удалось сделать бэкап БД при запуске")
+
+    # 1.1. Инициализация БД и миграции
+    await init_db()
     # 1.2. Неактивные студенты (остатки старой схемы) уходят в архив; операция идемпотентна
     try:
         await archive_inactive_students()

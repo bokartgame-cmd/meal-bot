@@ -166,6 +166,10 @@ async def cmd_set_role(message: Message, command: CommandObject):
         report = f"✅ Создан пользователь {target_id} с ролью «{role}» ({ROLE_LABELS[role]})."
     else:
         report = f"✅ Пользователю {target_id} роль изменена: {result['old_role']} → {role}."
+        if result.get("moved_from_students"):
+            report += "\n🗂 Запись студента перенесена в таблицу персонала и больше не учитывается среди студентов."
+        if result.get("restored_to_list"):
+            report += "\n↩️ Пользователь возвращён в список студентов: ему нужно заново пройти регистрацию (/start)."
     logger.info("Админ %s назначил роль %s пользователю %s", message.from_user.id, role, target_id)
 
     # Сообщаем самому пользователю; ошибка здесь не отменяет назначение роли

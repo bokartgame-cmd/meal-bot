@@ -12,6 +12,7 @@ from core.archive import (
     restore_from_archive,
 )
 from core.services import generate_unique_code, normalize
+from core.staff import get_staff_names
 
 # Группа: цифры-тире-цифры[буквы] (28-143, 15-224а)
 GROUP_RE = re.compile(r"^\d{1,4}-\d{1,4}[a-zа-яё]{0,2}$", re.IGNORECASE)
@@ -156,7 +157,12 @@ async def import_students_from_file(file_path: Path) -> dict:
         added = reactivated = kept = restored = archived = 0
         new_passwords = []  # (full_name, group_number, password) — для выгрузки
 
+        # Персонал, бывший студентом, в список студентов не возвращаем (он нигде не учитывается)
+        staff_names = await get_staff_names(db)
+
         for name, group in students:
+            if (name, group) in staff_names:
+                continue
             cur = await db.execute(
                 "SELECT id, password, is_active FROM allowed_students "
                 "WHERE full_name = ? AND group_number = ?",

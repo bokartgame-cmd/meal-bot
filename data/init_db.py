@@ -2,6 +2,7 @@
 import asyncio
 import aiosqlite
 from config import DB_PATH
+from core.staff import migrate_staff_out_of_users
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS allowed_students (
@@ -55,6 +56,16 @@ CREATE TABLE IF NOT EXISTS feedback (
     is_read INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_user_date ON feedback(user_id, created_at);
+-- Сотрудники и администраторы (роли выше student): отдельно от студентов, в студенческих выборках не участвуют
+CREATE TABLE IF NOT EXISTS staff_users (
+    user_id BIGINT PRIMARY KEY,
+    role TEXT NOT NULL,                 -- 'staff' | 'admin'
+    full_name TEXT,                     -- NULL у служебного аккаунта
+    group_number TEXT,
+    password TEXT,                      -- пароль из списка студентов: вернуть при понижении до student
+    chat_id BIGINT,
+    added_at TIMESTAMP NOT NULL
+);
 -- Оценка студентом удобства получения обеда (1-5), одна на выдачу
 CREATE TABLE IF NOT EXISTS meal_ratings (
     meal_id INTEGER PRIMARY KEY,        -- meals_log.id
@@ -86,6 +97,10 @@ async def init_db():
         await ensure_column(db, "users", "qr_sent_date", "TEXT")
         await ensure_column(db, "allowed_students", "password", "TEXT")
         await ensure_column(db, "allowed_students", "is_active", "INTEGER DEFAULT 1")
+        # Персонал (роль выше student) живёт в staff_users, а не среди студентов; идемпотентно
+        moved = await migrate_staff_out_of_users(db)
+        if moved:
+            print(f"  -> Сотрудников и администраторов перенесено в staff_users: {moved}")
         await db.commit()
     print(f"✅ БД инициализирована: {DB_PATH}")
 

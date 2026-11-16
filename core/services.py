@@ -6,6 +6,7 @@ from typing import Optional
 from datetime import datetime
 import pytz
 from config import DB_PATH, BOT_TZ, ALLOWED_STAFF_ATTEMPTS, STAFF_COOLDOWN_SECONDS
+from core.staff import demote_staff, move_user_to_staff
 
 # Исключаем визуально похожие символы: 0, O, 1, I, l
 SAFE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -133,30 +134,6 @@ async def verify_student(user_id: int, full_name: str, group: str, password: str
         await db.commit()
         return {"status": "verified", "code": code}
 
-async def get_user_info(user_id: int) -> dict | None:
-    """Получение информации о пользователе из БД"""
-    import logging
-    logger = logging.getLogger(__name__)
-
-    logger.info(f"GET_INFO: Ищем user_id={user_id} (type={type(user_id)})")
-
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        # Используем явное приведение типа в запросе для надежности
-        cur = await db.execute(
-            "SELECT * FROM users WHERE user_id = ?",
-            (int(user_id),)
-        )
-        user = await cur.fetchone()
-
-        if user:
-            logger.info(f"GET_INFO SUCCESS: Найдена запись для {user_id}")
-            return dict(user)
-        else:
-            logger.warning(f"GET_INFO FAILED: Запись для {user_id} не найдена")
-            return None
-
-
 async def process_issuance(code: str, issued_by: int, method: str) -> dict:
     """
     Обработка выдачи питания по коду.
@@ -252,21 +229,29 @@ async def import_students_from_csv(file_path: str) -> dict:
         return {"status": "error", "message": str(e)}
 
 
-async def make_staff(user_id: int) -> bool:
-    """Назначить пользователя сотрудником"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "UPDATE users SET role = 'staff' WHERE user_id = ?",
-            (user_id,)
-        )
-        await db.commit()
-        return cursor.rowcount > 0
-
-
 async def get_user_info(user_id: int) -> dict | None:
-    """Получить информацию о пользователе"""
+    """Информация о пользователе: сначала персонал (staff_users), затем студенты (users).
+    У персонала те же ключи, что у студента (role, is_verified, is_active, chat_id ...)."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT user_id, role, full_name, group_number, chat_id, added_at "
+            "FROM staff_users WHERE user_id = ?",
+            (user_id,),
+        )
+        st = await cursor.fetchone()
+        if st:
+            return {
+                "user_id": st["user_id"],
+                "full_name": st["full_name"] or "service account",
+                "group_number": st["group_number"] or "service",
+                "unique_code": None,
+                "is_verified": 1,
+                "is_active": 1,
+                "role": st["role"],
+                "chat_id": st["chat_id"],
+                "registered_at": st["added_at"],
+            }
         cursor = await db.execute(
             "SELECT * FROM users WHERE user_id = ?",
             (user_id,)
@@ -278,53 +263,72 @@ async def get_user_info(user_id: int) -> dict | None:
 VALID_ROLES = ("student", "staff", "admin")
 
 # Имя/группа студента для отчётов: из users, а если студента перенесли в архив — из архива;
-# если архив очищен — подпись-заглушка (выдачи при этом остаются в общих итогах).
+# если студент стал сотрудником — из staff_users; если архив очищен — подпись-заглушка (выдачи при этом остаются в общих итогах).
 _NAME_SQL = (
     "COALESCE(u.full_name, (SELECT a.full_name FROM archived_students a "
-    "WHERE a.user_id = m.user_id LIMIT 1), 'Удалённый студент')"
+    "WHERE a.user_id = m.user_id LIMIT 1), "
+    "(SELECT s.full_name FROM staff_users s WHERE s.user_id = m.user_id), 'Удалённый студент')"
 )
 _GROUP_SQL = (
     "COALESCE(u.group_number, (SELECT a.group_number FROM archived_students a "
-    "WHERE a.user_id = m.user_id LIMIT 1), '—')"
+    "WHERE a.user_id = m.user_id LIMIT 1), "
+    "(SELECT s.group_number FROM staff_users s WHERE s.user_id = m.user_id), '—')"
 )
 
 
 async def set_user_role(user_id: int, role: str) -> dict:
-    """Назначить роль пользователю (для команды /set_role).
+    """Назначить роль пользователю (для команды /set_role и set_role.py).
 
-    Возвращает {"status": "updated"|"created"|"not_found", "old_role": str | None}.
-    - Пользователь есть в БД: меняем роль; для staff/admin заодно подтверждаем
-      и активируем его (как в set_role.py). При понижении до student флаги не трогаем,
-      чтобы случайно не реактивировать исключённого студента.
-    - Пользователя нет: для staff/admin создаём служебную запись (как в set_role.py);
-      для student создавать нечего — студент появляется через регистрацию.
+    Возвращает {"status": "updated"|"created"|"not_found", "old_role": str | None, ...}.
+    Персонал (staff/admin) хранится в staff_users, студенты — в users:
+    - повышение студента: его запись переносится в staff_users и убирается из списка студентов
+      (ключ "moved_from_students": True), чтобы он нигде не учитывался как студент;
+    - смена роли персонала (staff <-> admin) меняет роль на месте;
+    - понижение персонала до student: запись удаляется из staff_users, бывший студент
+      возвращается в список студентов и проходит регистрацию заново
+      (ключ "restored_to_list": True, если у него был профиль студента);
+    - пользователя нет: для staff/admin создаём служебную запись, для student — not_found
+      (студент появляется через регистрацию).
     """
     if role not in VALID_ROLES:
         raise ValueError(f"Недопустимая роль: {role!r}")
 
     async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT role FROM staff_users WHERE user_id = ?", (user_id,))
+        staff_row = await cur.fetchone()
+        if staff_row:
+            old_role = staff_row[0]
+            if role == "student":
+                info = await demote_staff(db, user_id)
+                await db.commit()
+                result = {"status": "updated", "old_role": old_role}
+                if info and info["restored_to_list"]:
+                    result["restored_to_list"] = True
+                return result
+            await db.execute("UPDATE staff_users SET role = ? WHERE user_id = ?", (role, user_id))
+            await db.commit()
+            return {"status": "updated", "old_role": old_role}
+
         cur = await db.execute("SELECT role FROM users WHERE user_id = ?", (user_id,))
         row = await cur.fetchone()
-
         if row:
+            old_role = row[0]
             if role == "student":
-                await db.execute("UPDATE users SET role = ? WHERE user_id = ?", (role, user_id))
-            else:
-                await db.execute(
-                    "UPDATE users SET role = ?, is_verified = 1, is_active = 1 WHERE user_id = ?",
-                    (role, user_id),
-                )
+                if old_role != "student":  # устаревшая запись: роль выше student должна жить в staff_users
+                    await db.execute("UPDATE users SET role = 'student' WHERE user_id = ?", (user_id,))
+                    await db.commit()
+                return {"status": "updated", "old_role": old_role}
+            await move_user_to_staff(db, user_id, role)
             await db.commit()
-            return {"status": "updated", "old_role": row[0]}
+            return {"status": "updated", "old_role": old_role,
+                    "moved_from_students": old_role == "student"}
 
         if role == "student":
             return {"status": "not_found", "old_role": None}
 
         await db.execute(
-            """INSERT INTO users (user_id, full_name, group_number, unique_code,
-                   is_verified, is_active, role)
-               VALUES (?, 'service account', 'service', ?, 1, 1, ?)""",
-            (user_id, generate_unique_code(), role),
+            "INSERT INTO staff_users (user_id, role, added_at) VALUES (?, ?, ?)",
+            (user_id, role, datetime.now(pytz.timezone(BOT_TZ)).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")),
         )
         await db.commit()
         return {"status": "created", "old_role": None}
@@ -335,6 +339,10 @@ async def save_user_chat_id(user_id: int, chat_id: int) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "UPDATE users SET chat_id = ? WHERE user_id = ? AND (chat_id IS NULL OR chat_id != ?)",
+            (int(chat_id), int(user_id), int(chat_id)),
+        )
+        await db.execute(
+            "UPDATE staff_users SET chat_id = ? WHERE user_id = ? AND (chat_id IS NULL OR chat_id != ?)",
             (int(chat_id), int(user_id), int(chat_id)),
         )
         await db.commit()
@@ -411,8 +419,11 @@ async def list_users_with_roles() -> list:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT user_id, full_name, group_number, role, is_active "
-            "FROM users ORDER BY registered_at"
+            "SELECT user_id, full_name, group_number, role, is_active FROM ("
+            "SELECT user_id, full_name, group_number, role, is_active, registered_at AS ts FROM users "
+            "UNION ALL "
+            "SELECT user_id, COALESCE(full_name, 'service account'), COALESCE(group_number, 'service'), "
+            "role, 1, added_at FROM staff_users) ORDER BY ts"
         )
         return [dict(row) for row in await cur.fetchall()]
 

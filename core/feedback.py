@@ -71,6 +71,7 @@ async def get_recent_feedback(limit: int = 10) -> list:
             """SELECT f.id, f.kind, f.text, f.created_at, f.is_read, f.user_id,
                       COALESCE(u.full_name,
                                (SELECT a.full_name FROM archived_students a WHERE a.user_id = f.user_id LIMIT 1),
+                               (SELECT s.full_name FROM staff_users s WHERE s.user_id = f.user_id),
                                'неизвестный') AS full_name,
                       COALESCE(u.group_number,
                                (SELECT a.group_number FROM archived_students a WHERE a.user_id = f.user_id LIMIT 1),
@@ -92,6 +93,7 @@ async def get_feedback_for_period(from_date: str, to_date: str) -> list:
             """SELECT f.id, f.kind, f.text, f.created_at, f.is_read,
                       COALESCE(u.full_name,
                                (SELECT a.full_name FROM archived_students a WHERE a.user_id = f.user_id LIMIT 1),
+                               (SELECT s.full_name FROM staff_users s WHERE s.user_id = f.user_id),
                                'неизвестный') AS full_name,
                       COALESCE(u.group_number,
                                (SELECT a.group_number FROM archived_students a WHERE a.user_id = f.user_id LIMIT 1),
@@ -114,7 +116,7 @@ async def mark_all_read() -> int:
 
 async def get_admin_ids() -> list:
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT user_id FROM users WHERE role = 'admin'")
+        cur = await db.execute("SELECT user_id FROM staff_users WHERE role = 'admin'")
         return [int(r[0]) for r in await cur.fetchall()]
 
 
