@@ -133,8 +133,8 @@ async def cb_feedback_kind(callback: CallbackQuery, state: FSMContext):
 async def cb_feedback_cancel(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
+    # Просто убираем служебное сообщение: карточка с кнопками выше остаётся на экране
     await _delete_quietly(callback.message)
-    await callback.message.answer("Отправка отменена.", reply_markup=get_qr_menu_inline())
 
 
 @router.message(StudentFeedback.waiting_text, F.text, ~F.text.startswith("/"))
