@@ -64,7 +64,7 @@ REGISTRATION_DENIED_TEXTS = {
     "already_registered": (
         "⚠️ Эти данные уже привязаны к другому аккаунту.\n"
         "Повторная регистрация по чужим данным невозможна.\n"
-        "Если это ошибка — обратитесь к администратору."
+        "Если это ошибка — обратитесь к куратору."
     ),
     "wrong_password": (
         "❌ Неверный пароль.\n"
@@ -80,9 +80,9 @@ def is_inactive_student(info) -> bool:
 
 REG_MSGS_KEY = "reg_msg_ids"
 REG_CANCELLED_TEXT = "Регистрация отменена, вы можете начать заново."
-REG_PROMPT_FULL_NAME = "Введите ваше ФИО полностью (как в списке деканата):"
-REG_PROMPT_GROUP = "Введите номер вашей группы (например, 28-143):"
-REG_PROMPT_PASSWORD = "Введите ваш личный пароль (6 символов, выдан вместе со списком):"
+REG_PROMPT_FULL_NAME = "Введите ваше ФИО полностью:"
+REG_PROMPT_GROUP = "Введите номер вашей группы (например, 16-534):"
+REG_PROMPT_PASSWORD = "Введите ваш личный пароль (6 символов, выдается куратором):"
 
 
 async def _track(state: FSMContext, *items):
@@ -120,7 +120,7 @@ async def cmd_start(message: Message, state: FSMContext):
         sent = await message.answer(
             "👋 Добро пожаловать в бот питания!\n\n"
             "Для доступа к функциям необходимо пройти регистрацию.\n"
-            "Введите ваше ФИО полностью (как в списке деканата):",
+            "Введите ваше ФИО полностью:",
             reply_markup=cancel_menu(),
         )
         await state.set_state(StudentRegistration.full_name)
@@ -291,10 +291,10 @@ async def cb_help(callback: CallbackQuery):
 async def cmd_get_id(message: Message):
     """Показывает пользователю его ID"""
     user_id = message.from_user.id
-    username = message.from_user.username or "не указан"
     await message.answer(
         f"🆔 Ваш ID в MAX: {user_id}\n"
-        f"👤 Username: @{username}"
+        f"Отправьте этот ID администратору, для получения роли."
+
     )
 
 

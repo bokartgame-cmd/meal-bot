@@ -86,18 +86,18 @@ async def send_stats(message: Message, from_date: str, to_date: str):
     caption = (
         f"📊 Статистика за период: с {from_date} по {to_date}\n"
         f"🍽 Всего выдано обедов: {stats['total_issued']}\n"
-        f"✅ Активных получили ≥1: {stats['active_got']} из {stats['active_total']}\n"
-        f"❌ Активных не получили ни одного: {stats['active_not_got']}"
+        f"✅ Получили обедов: {stats['active_got']} из {stats['active_total']}\n"
+        f"❌ Не получили ни одного обеда: {stats['active_not_got']}"
     )
     time_all = stats.get("time_all")
     if time_all:
         caption += (
-            f"\n🕐 Время получения (все студенты): "
+            f"\n🕐 Время получения (все студенты): \n"
             f"мин. {time_all['t_min']}, среднее {time_all['t_avg']}, макс. {time_all['t_max']}"
         )
     if stats["feedback"]:
         complaints = sum(1 for r in stats["feedback"] if r["kind"] == "complaint")
-        caption += (f"\n💬 Обращений за период: {len(stats['feedback'])} "
+        caption += (f"\n\n💬 Обращений за период: {len(stats['feedback'])} "
                     f"(жалоб {complaints}, предложений {len(stats['feedback']) - complaints}) — на листе «Жалобы и предложения»")
     ratings = stats["ratings"]
     if ratings["count"]:
@@ -205,8 +205,7 @@ async def cb_admin_restart(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "🔄 Перезапуск бота\n\n"
         "Бот остановится и запустится заново — это занимает несколько секунд. "
-        "Сообщения, отправленные в этот момент, могут не обработаться. "
-        "Новый код (после обновления файлов) подхватится.\n\n"
+        "Сообщения, отправленные в этот момент, могут не обработаться.\n\n"
         "Перезапустить?",
         reply_markup=get_restart_confirm_inline(make_token(CB_RESTART_CONFIRM)),
     )
