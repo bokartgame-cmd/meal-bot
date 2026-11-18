@@ -21,8 +21,9 @@ MAX_API_BASE_URL = os.getenv("MAX_API_BASE_URL", "https://platform-api.max.ru").
 # === Общие настройки ===
 # Часовой пояс бота (Владивосток, UTC+10): по нему считаются «сегодня», коды на день, отчёты и рассылка
 BOT_TZ = os.getenv("BOT_TZ", "Asia/Vladivostok")
-# Ежедневная автоматическая рассылка QR-кодов студентам (время по BOT_TZ)
-DAILY_QR_ENABLED = os.getenv("DAILY_QR_ENABLED", "1").lower() not in ("0", "false", "no", "off")
+# Ежедневная автоматическая рассылка личных QR-кодов студентам (время по BOT_TZ).
+# В новой схеме (общий QR на раздаче) рассылка отключена; включать только как запасной режим.
+DAILY_QR_ENABLED = os.getenv("DAILY_QR_ENABLED", "0").lower() in ("1", "true", "yes", "on")
 DAILY_QR_HOUR = int(os.getenv("DAILY_QR_HOUR", "10"))
 DAILY_QR_MINUTE = int(os.getenv("DAILY_QR_MINUTE", "0"))
 # Ежедневный бэкап БД (время по BOT_TZ); хранится BACKUP_KEEP последних копий (по одной на день)
@@ -36,6 +37,15 @@ FEEDBACK_DAILY_LIMIT = int(os.getenv("FEEDBACK_DAILY_LIMIT", "5"))
 FEEDBACK_MAX_LEN = int(os.getenv("FEEDBACK_MAX_LEN", "1000"))
 # Файл-пометка «кто попросил перезапуск»: после старта бот сообщает ему, что вернулся
 RESTART_NOTICE_PATH = BASE_DIR / "restart_notice.json"
+# === Новая схема выдачи: общий статичный QR + подтверждение сотрудником ===
+# Содержимое общего QR на раздаче: диплинк https://max.ru/<бот>?start=<MEAL_QR_PAYLOAD>
+MEAL_QR_PAYLOAD = os.getenv("MEAL_QR_PAYLOAD", "meal")
+# Через сколько минут права возвращаются студенту, если сотрудник не нажал «Подтвердить»
+MEAL_CONFIRM_TIMEOUT_MIN = int(os.getenv("MEAL_CONFIRM_TIMEOUT_MIN", "10"))
+# Как часто (сек) проверять просроченные запросы
+MEAL_EXPIRE_CHECK_SECONDS = int(os.getenv("MEAL_EXPIRE_CHECK_SECONDS", "30"))
+# Запасной режим на время пилота: сканирование личного QR студента сотрудником и ручной ввод кода
+LEGACY_QR_ENABLED = os.getenv("LEGACY_QR_ENABLED", "1").lower() not in ("0", "false", "no", "off")
 ALLOWED_STAFF_ATTEMPTS = 10
 STAFF_COOLDOWN_SECONDS = 60
 QR_PAYLOAD_MAX_LEN = 128

@@ -1,6 +1,8 @@
 """UI-константы и фабрики inline-клавиатур для MAX"""
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+import config
+
 # --- Роли (иерархия: admin > staff > student) ---
 ROLE_ADMIN = "admin"
 ROLE_STAFF = "staff"
@@ -8,6 +10,11 @@ ROLE_STUDENT = "student"
 
 # --- Тексты кнопок ---
 STUDENT_BTN_QR = "🎫 Мой QR-код"
+STUDENT_BTN_GIFT = "🎁 Угостить друга"
+STAFF_BTN_START = "▶️ Начать выдачу"
+BTN_CONFIRM = "✅ Подтвердить"
+BTN_REVOKE_GIFT = "↩️ Забрать подарок обратно"
+ADMIN_BTN_QR = "🖨 QR для раздачи"
 STAFF_BTN_CODE = "✍️ Ввести код вручную"
 ADMIN_BTN_STATS = "📊 Статистика"
 BTN_HELP = "📖 Инструкция"
@@ -30,6 +37,12 @@ STUDENT_INACTIVE_TEXT = (
 
 # --- Callback data ---
 CB_STUDENT_QR = "student_qr"
+CB_STAFF_START = "staff_start"          # сотрудник: «Начать выдачу»
+CB_MEAL_CONFIRM = "meal_ok"             # студент: подтвердить запрос после скана общего QR
+CB_MEAL_GIVE_PREFIX = "meal_give:"      # сотрудник: подтвердить выдачу (meal_give:<id запроса>)
+CB_GIFT_NEW = "gift_new"                # студент: «Угостить друга»
+CB_GIFT_REVOKE_PREFIX = "gift_revoke:"  # студент: забрать подарок (gift_revoke:<токен>)
+CB_ADMIN_QR = "admin_qr"                # администратор: картинка общего QR для печати
 CB_STAFF_CODE = "staff_code"
 CB_HELP = "help"
 CB_CANCEL = "cancel"
@@ -68,15 +81,21 @@ CB_RESTART_CANCEL = "restart_cancel"
 # --- Тексты справок ---
 STUDENT_HELP_TEXT = (
     "📖 Как это работает\n\n"
-    "1. В столовой покажите сотруднику свой QR-код.\n"
-    "2. Одна порция выдаётся один раз в учебный день.\n"
-    "3. Код обновляется каждый день, вчерашний QR не сработает."
+    "1. В столовой отсканируйте QR-код на раздаче и нажмите «Подтвердить».\n"
+    "2. Сотрудник получит ваше имя и выдаст обед — он подтвердит выдачу у себя, показывать ничего не нужно.\n"
+    "3. На сутки у вас одно право на обед. Неиспользованное сгорает в конце суток.\n"
+    "4. «🎁 Угостить друга» создаёт одноразовую ссылку: друг откроет её и получит ваше право. "
+    "Пока ссылку не открыли, право можно забрать обратно.\n"
+    "5. Если сотрудник не подтвердил выдачу за отведённое время, право вернётся к вам."
 )
 STAFF_HELP_TEXT = (
     "📖 Инструкция сотрудника\n\n"
-    "1. Отсканируйте QR студента камерой телефона.\n"
-    "2. Либо нажмите «✍️ Ввести код вручную» и введите код с карточки.\n"
-    "3. Ответы: ✅ — выдано; ⚠️ — уже выдано сегодня; ❌ — код не найден."
+    "1. В начале дня нажмите «▶️ Начать выдачу» — до конца суток все запросы приходят вам.\n"
+    "2. Студент сканирует QR на раздаче и подтверждает запрос. Вам приходит сообщение "
+    "«Успешно! Иванов И., 28-143. Обедов к выдаче: N».\n"
+    "3. Выдайте обеды и нажмите «✅ Подтвердить» — только после этого выдача записывается.\n"
+    "4. Если не подтвердить, права вернутся студенту по истечении времени ожидания.\n"
+    "5. Если выдачу начнёт другой сотрудник, она перейдёт к нему, а вам придёт уведомление."
 )
 ADMIN_HELP_TEXT = (
     "📖 Инструкция администратора\n\n"
@@ -88,6 +107,8 @@ ADMIN_HELP_TEXT = (
     "Архив студентов: /archive (или кнопка «🗄 Архив студентов»).\n"
     "Студенты, которых нет в загруженном списке, автоматически уходят в архив "
     "и возвращаются из него, когда снова появляются в списке.\n\n"
+    "QR для раздачи: кнопка «🖨 QR для раздачи» или /qr — картинку нужно распечатать один раз, "
+    "она работает каждый день.\n\n"
     "Обращения студентов: кнопка «📬 Обращения студентов» или /feedback. "
     "Новые обращения приходят сюда сразу.\n"
     "Перезапуск бота: кнопка «🔄 Перезапустить бота» (с подтверждением)."
@@ -103,16 +124,22 @@ def get_start_menu_inline(role: str) -> InlineKeyboardMarkup:
     keyboard = []
     if role == ROLE_ADMIN:
         # Оставляем только функционал управления, инструкцию убрали
+        keyboard.append([InlineKeyboardButton(text=STAFF_BTN_START, callback_data=CB_STAFF_START)])
+        keyboard.append([InlineKeyboardButton(text=ADMIN_BTN_QR, callback_data=CB_ADMIN_QR)])
         keyboard.append([InlineKeyboardButton(text=ADMIN_BTN_IMPORT, callback_data=CB_ADMIN_IMPORT)])
         keyboard.append([InlineKeyboardButton(text=ADMIN_BTN_STATS, callback_data=CB_ADMIN_STATS)])
         keyboard.append([InlineKeyboardButton(text=ADMIN_BTN_ARCHIVE, callback_data=CB_ADMIN_ARCHIVE)])
         keyboard.append([InlineKeyboardButton(text=ADMIN_BTN_FEEDBACK, callback_data=CB_ADMIN_FEEDBACK)])
         keyboard.append([InlineKeyboardButton(text=ADMIN_BTN_RESTART, callback_data=CB_ADMIN_RESTART)])
     elif role == ROLE_STAFF:
-        keyboard.append([InlineKeyboardButton(text=STAFF_BTN_CODE, callback_data=CB_STAFF_CODE)])
+        keyboard.append([InlineKeyboardButton(text=STAFF_BTN_START, callback_data=CB_STAFF_START)])
+        if config.LEGACY_QR_ENABLED:  # запасной режим пилота: ручной ввод личного кода
+            keyboard.append([InlineKeyboardButton(text=STAFF_BTN_CODE, callback_data=CB_STAFF_CODE)])
         keyboard.append([InlineKeyboardButton(text=BTN_HELP, callback_data=CB_HELP)])
     else:  # student
-        keyboard.append([InlineKeyboardButton(text=STUDENT_BTN_QR, callback_data=CB_STUDENT_QR)])
+        keyboard.append([InlineKeyboardButton(text=STUDENT_BTN_GIFT, callback_data=CB_GIFT_NEW)])
+        if config.LEGACY_QR_ENABLED:  # запасной режим пилота: личный QR
+            keyboard.append([InlineKeyboardButton(text=STUDENT_BTN_QR, callback_data=CB_STUDENT_QR)])
         keyboard.append([InlineKeyboardButton(text=STUDENT_BTN_FEEDBACK, callback_data=CB_FEEDBACK)])
         keyboard.append([InlineKeyboardButton(text=BTN_HELP, callback_data=CB_HELP)])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -189,6 +216,7 @@ def get_qr_menu_inline() -> InlineKeyboardMarkup:
     """Клавиатура под карточкой студента: 1-я — обновить QR, 2-я — инструкция"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text=STUDENT_BTN_GIFT, callback_data=CB_GIFT_NEW)],
             [InlineKeyboardButton(text="🔄 Обновить QR-код", callback_data=CB_STUDENT_QR)],
             [InlineKeyboardButton(text=STUDENT_BTN_FEEDBACK, callback_data=CB_FEEDBACK)],
             [InlineKeyboardButton(text=BTN_HELP, callback_data=CB_HELP)],
@@ -241,3 +269,28 @@ def get_stats_period_inline() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_CANCEL)],
         ]
     )
+
+
+def get_student_confirm_inline() -> InlineKeyboardMarkup:
+    """Под сообщением после скана общего QR: студент подтверждает запрос"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=BTN_CONFIRM, callback_data=CB_MEAL_CONFIRM)],
+    ])
+
+
+def get_staff_confirm_inline(request_id: int) -> InlineKeyboardMarkup:
+    """Под сообщением сотруднику: подтверждение выдачи (запись в журнал — после нажатия)"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=BTN_CONFIRM, callback_data=f"{CB_MEAL_GIVE_PREFIX}{request_id}")],
+    ])
+
+
+def get_gift_revoke_inline(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=BTN_REVOKE_GIFT, callback_data=f"{CB_GIFT_REVOKE_PREFIX}{token}")],
+    ])
+
+
+def get_student_home_inline() -> InlineKeyboardMarkup:
+    """Главное меню студента (то же, что get_start_menu_inline для роли student)"""
+    return get_start_menu_inline(ROLE_STUDENT)

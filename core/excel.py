@@ -71,6 +71,49 @@ def _add_feedback_sheet(wb: Workbook, from_date: str, to_date: str, feedback: li
     ws.freeze_panes = "A4"
 
 
+def _add_gifts_sheet(wb: Workbook, from_date: str, to_date: str, gifts: list):
+    """Лист «Подарки»: журнал «Угостить друга» за период (кто кого угостил)"""
+    ws = wb.create_sheet("Подарки")
+    header_font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    thin = Side(style="thin")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    ws.merge_cells("A1:G1")
+    ws["A1"] = f"Подарки обедов за период: с {from_date} по {to_date}"
+    ws["A1"].font = Font(name="Arial", size=14, bold=True)
+
+    headers = ["Дата", "Создан", "Принят", "Даритель", "Группа дарителя", "Получатель", "Группа получателя"]
+    for col, header in enumerate(headers, start=1):
+        cell = ws.cell(row=3, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+        cell.border = border
+
+    row_num = 4
+    for g in gifts:
+        if g["status"] == "revoked":
+            receiver, rgroup = "(отозван дарителем)", ""
+        elif g["status"] == "active":
+            receiver, rgroup = "(не принят, сгорел)", ""
+        else:
+            receiver, rgroup = str(g["receiver_name"]).title(), str(g["receiver_group"]).upper()
+        values = [
+            g["day"], str(g["created_at"])[:16], str(g["used_at"] or "")[:16],
+            str(g["giver_name"]).title(), str(g["giver_group"]).upper(), receiver, rgroup,
+        ]
+        for col, value in enumerate(values, start=1):
+            cell = ws.cell(row=row_num, column=col)
+            _set_text(cell, value)
+            cell.border = border
+        row_num += 1
+    if not gifts:
+        ws.cell(row=row_num, column=1, value="(нет подарков за период)")
+    for col, width in zip("ABCDEFG", (12, 18, 18, 34, 16, 34, 16)):
+        ws.column_dimensions[col].width = width
+
+
 def build_stats_excel(from_date: str, to_date: str, stats: dict) -> BytesIO:
     """
     Строит Excel-книгу со статистикой.
@@ -190,6 +233,10 @@ def build_stats_excel(from_date: str, to_date: str, stats: dict) -> BytesIO:
     # Дополнительный лист: жалобы и предложения за период (если данные переданы)
     if stats.get("feedback") is not None:
         _add_feedback_sheet(wb, from_date, to_date, stats["feedback"])
+
+    # Дополнительный лист: журнал подарков за период (если данные переданы)
+    if stats.get("gifts") is not None:
+        _add_gifts_sheet(wb, from_date, to_date, stats["gifts"])
 
     # Сохраняем в память
     buffer = BytesIO()

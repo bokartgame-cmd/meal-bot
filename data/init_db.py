@@ -62,6 +62,49 @@ CREATE TABLE IF NOT EXISTS meal_ratings (
     rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
     rated_at TIMESTAMP NOT NULL
 );
+-- Права на обед по суткам (день по BOT_TZ). Строка создаётся при первом обращении за день
+-- с одним правом; неиспользованные права на следующий день не переносятся.
+CREATE TABLE IF NOT EXISTS meal_rights (
+    user_id BIGINT NOT NULL,
+    day TEXT NOT NULL,                  -- YYYY-MM-DD
+    rights INTEGER NOT NULL DEFAULT 0 CHECK (rights >= 0),
+    PRIMARY KEY (user_id, day)
+);
+-- Кто сегодня выдаёт обеды (одна запись на сутки)
+CREATE TABLE IF NOT EXISTS issuance_sessions (
+    day TEXT PRIMARY KEY,
+    staff_id BIGINT NOT NULL,
+    started_at TIMESTAMP NOT NULL
+);
+-- Запрос на выдачу: права зарезервированы после подтверждения студентом,
+-- запись в meals_log появляется только после подтверждения сотрудником
+CREATE TABLE IF NOT EXISTS meal_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id BIGINT NOT NULL,
+    day TEXT NOT NULL,
+    count INTEGER NOT NULL,
+    status TEXT NOT NULL,               -- 'pending' | 'confirmed' | 'expired' | 'cancelled'
+    staff_id BIGINT NOT NULL,
+    staff_chat_id BIGINT,
+    staff_message_id TEXT,
+    staff_msg_deleted INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    confirmed_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_requests_status ON meal_requests(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_requests_user_day ON meal_requests(user_id, day, status);
+-- Подарки: одноразовые ссылки «Угостить друга» (журнал: кто, кому, когда)
+CREATE TABLE IF NOT EXISTS meal_gifts (
+    token TEXT PRIMARY KEY,
+    giver_id BIGINT NOT NULL,
+    day TEXT NOT NULL,
+    status TEXT NOT NULL,               -- 'active' | 'used' | 'revoked'
+    receiver_id BIGINT,
+    created_at TIMESTAMP NOT NULL,
+    used_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_gifts_giver ON meal_gifts(giver_id, day, status);
 """
 
 async def ensure_column(db, table: str, column: str, definition: str):
@@ -84,6 +127,8 @@ async def init_db():
         await ensure_column(db, "users", "chat_id", "BIGINT")
         # дата последней успешной ежедневной рассылки QR (чтобы не слать дважды за день)
         await ensure_column(db, "users", "qr_sent_date", "TEXT")
+        # выдача по новой схеме: к какому запросу относится запись журнала
+        await ensure_column(db, "meals_log", "request_id", "INTEGER")
         await ensure_column(db, "allowed_students", "password", "TEXT")
         await ensure_column(db, "allowed_students", "is_active", "INTEGER DEFAULT 1")
         await db.commit()

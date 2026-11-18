@@ -4,6 +4,7 @@ from aiogram import Router, F
 from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
+import config
 from bot.fsm import StaffManualCode
 from bot.keyboards import (
     BTN_CANCEL,
@@ -48,7 +49,12 @@ async def notify_student(message: Message, result: dict):
 
 @router.message(CommandStart(deep_link=True))
 async def process_qr_scan(message: Message, command: CommandObject):
-    """Сканирование QR камерой: /start CODE"""
+    """Запасной режим (пилот): сканирование личного QR студента камерой: /start CODE.
+    Общий QR и подарки обрабатывает bot/routers/meal.py (он подключён раньше)."""
+    if not config.LEGACY_QR_ENABLED:
+        await message.answer("ℹ️ Личные QR больше не используются. Студенты сканируют общий QR на раздаче, "
+                             "а вы подтверждаете выдачу кнопкой в чате.")
+        return
     code = (command.args or "").strip()
     if not code:
         await message.answer("❌ Некорректный QR-код")
@@ -67,7 +73,10 @@ async def process_qr_scan(message: Message, command: CommandObject):
 
 @router.callback_query(F.data == CB_STAFF_CODE)
 async def cb_enter_code(callback: CallbackQuery, state: FSMContext):
-    """Кнопка меню: переход в режим ожидания кода"""
+    """Кнопка меню: переход в режим ожидания кода (запасной режим пилота)"""
+    if not config.LEGACY_QR_ENABLED:
+        await callback.answer("Ручной ввод кода отключён.", show_alert=True)
+        return
     info = await get_user_info(callback.from_user.id)
     if not info or info["role"] not in ("staff", "admin"):
         await callback.answer("⛔ У вас нет прав для выдачи питания.", show_alert=True)

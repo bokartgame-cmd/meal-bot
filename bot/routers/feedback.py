@@ -26,7 +26,6 @@ from bot.keyboards import (
     get_feedback_admin_inline,
     get_feedback_cancel_inline,
     get_feedback_kind_inline,
-    get_qr_menu_inline,
     get_start_menu_inline,
 )
 from core.feedback import (
@@ -183,7 +182,7 @@ async def process_feedback_text(message: Message, state: FSMContext):
     async def reply_to_student():
         await message.answer(
             f"✅ Спасибо! Ваше обращение №{feedback_id} отправлено администратору.",
-            reply_markup=get_qr_menu_inline(),
+            reply_markup=get_start_menu_inline("student"),
         )
 
     await asyncio.gather(

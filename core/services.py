@@ -159,14 +159,18 @@ async def get_user_info(user_id: int) -> dict | None:
 
 async def process_issuance(code: str, issued_by: int, method: str) -> dict:
     """
-    Обработка выдачи питания по коду.
+    Запасной режим (пилот): выдача по личному коду студента. Новая схема — core/meals.py.
+    Выдача тратит то же право на обед, что и новая схема, поэтому за сутки обедов
+    не больше, чем прав (учитываются и подарки).
     :param code: Уникальный код студента
     :param issued_by: ID сотрудника (или админа), который совершает выдачу
     :param method: Способ выдачи ("qr" или "manual")
     """
+    from core.meals import consume_one_right
+
     today = datetime.now(pytz.timezone(BOT_TZ)).strftime('%Y-%m-%d')
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(DB_PATH, isolation_level=None) as db:
         db.row_factory = aiosqlite.Row
 
         # 1. Ищем пользователя по коду
@@ -182,31 +186,29 @@ async def process_issuance(code: str, issued_by: int, method: str) -> dict:
                 "message": "❌ Код не найден или пользователь неактивен."
             }
 
-        # 2. Проверяем, не выдавали ли уже сегодня этому студенту
-        cur = await db.execute(
-            "SELECT id FROM meals_log WHERE user_id = ? AND DATE(issued_at) = ?",
-            (user["user_id"], today)
-        )
-        if await cur.fetchone():
-            # 🔧 Форматируем для красивого вывода даже при ошибке "уже выдано"
-            display_name = user["full_name"].title()
-            display_group = user["group_number"].upper()
-            return {
-                "status": "error",
-                "message": f"⚠️ Уже выдано сегодня: {display_name} ({display_group})."
-            }
-
-        # 3. Записываем факт выдачи в лог
-        cur = await db.execute(
-            "INSERT INTO meals_log (user_id, issued_at, issued_by, method) VALUES (?, ?, ?, ?)",
-            (user["user_id"], datetime.now(pytz.timezone(BOT_TZ)).replace(tzinfo=None), issued_by, method)
-        )
-        meal_id = cur.lastrowid
-        await db.commit()
-
-        # 🔧 Форматируем имя и группу для красивого вывода при успехе
+        # 🔧 Форматируем для красивого вывода
         display_name = user["full_name"].title()
         display_group = user["group_number"].upper()
+
+        # 2. Списываем право на сегодня и пишем выдачу в журнал одной транзакцией
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            if not await consume_one_right(db, user["user_id"], today):
+                await db.execute("ROLLBACK")
+                return {
+                    "status": "error",
+                    "message": f"⚠️ Нет права на обед сегодня (уже выдано или подарено): "
+                               f"{display_name} ({display_group})."
+                }
+            cur = await db.execute(
+                "INSERT INTO meals_log (user_id, issued_at, issued_by, method) VALUES (?, ?, ?, ?)",
+                (user["user_id"], datetime.now(pytz.timezone(BOT_TZ)).replace(tzinfo=None), issued_by, method)
+            )
+            meal_id = cur.lastrowid
+            await db.execute("COMMIT")
+        except Exception:
+            await db.execute("ROLLBACK")
+            raise
 
         return {
             "status": "success",

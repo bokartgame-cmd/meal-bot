@@ -41,6 +41,7 @@ import config
 from core.archive import clear_archive, count_archived
 from core.excel import build_stats_excel, build_passwords_excel
 from core.feedback import get_feedback_for_period, get_rating_stats
+from core.meals import get_gifts_for_period
 from core.importer import import_students_from_file
 from core.max_api import send_text_to_user
 from core.restart import (
@@ -79,6 +80,7 @@ async def send_stats(message: Message, from_date: str, to_date: str):
     stats = await get_stats_for_period(from_date, to_date)
     stats["ratings"] = await get_rating_stats(from_date, to_date)
     stats["feedback"] = await get_feedback_for_period(from_date, to_date)
+    stats["gifts"] = await get_gifts_for_period(from_date, to_date)
     buffer = build_stats_excel(from_date, to_date, stats)
     filename = f"stats_{from_date}_{to_date}.xlsx"
     file = BufferedInputFile(buffer.read(), filename=filename)

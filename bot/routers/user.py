@@ -22,6 +22,7 @@ from bot.keyboards import (
 )
 from core.qr import generate_diplink, generate_qr_card_bytes
 from core.archive import is_user_archived
+from core.meals import get_rights
 from core.services import get_active_code, get_user_info, save_user_chat_id, verify_student
 
 logger = logging.getLogger(__name__)
@@ -140,8 +141,8 @@ async def cmd_start(message: Message, state: FSMContext):
         )
         return
 
-    # Студент -> сразу карточка с QR, без сообщения "Выберите действие:"
-    await send_qr_card(message, message.from_user.id)
+    # Студент -> главное меню с числом прав на сегодня
+    await send_student_home(message, message.from_user.id)
 
 
 # --- Регистрация (FSM): ФИО -> группа -> пароль ---
@@ -241,8 +242,8 @@ async def process_password(message: Message, state: FSMContext):
     await state.clear()
 
     if result["status"] == "verified":
-        # Просто карточка с QR, без сообщения "Выберите действие:"
-        await send_qr_card(message, message.from_user.id)
+        # Регистрация завершена: главное меню с правами на сегодня
+        await send_student_home(message, message.from_user.id)
     else:
         text = REGISTRATION_DENIED_TEXTS.get(
             result.get("reason"),
@@ -314,15 +315,34 @@ async def handle_text_without_state(message: Message, state: FSMContext):
                 reply_markup=get_start_menu_inline(info["role"]),
             )
         else:
-            # Студент — сразу QR
-            await send_qr_card(message, message.from_user.id)
+            # Студент — главное меню
+            await send_student_home(message, message.from_user.id)
         return
 
     await state.set_state(StudentRegistration.full_name)
     await process_full_name(message, state)
 
 
-# --- Общее: карточка с QR и буквенным кодом ---
+# --- Главное меню студента (новая схема: общий QR на раздаче) ---
+async def send_student_home(message: Message, user_id: int):
+    """Сколько прав на обед у студента сегодня и что делать дальше"""
+    rights = await get_rights(user_id)
+    if rights is None:
+        await message.answer(STUDENT_INACTIVE_TEXT)
+        return
+    if rights > 0:
+        status = f"🍽 Права на обед сегодня: {rights}."
+    else:
+        status = "🍽 На сегодня права на обед нет: оно уже использовано или подарено."
+    await message.answer(
+        f"{status}\n\n"
+        "Чтобы получить обед, отсканируйте QR-код на раздаче и подтвердите запрос в чате. "
+        "Право можно подарить другу кнопкой «Угостить друга». Неиспользованное право сгорает в конце суток.",
+        reply_markup=get_start_menu_inline("student"),
+    )
+
+
+# --- Запасной режим пилота: карточка с личным QR и буквенным кодом ---
 async def send_qr_card(message: Message, user_id: int):
     """Карточка: QR + крупный код; под сообщением кнопки [Обновить QR] и [Инструкция]"""
     code = await get_active_code(user_id)
