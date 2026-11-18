@@ -1,29 +1,26 @@
-"""MAX-бот: обработчики для студентов (регистрация с паролем, QR-карточка)"""
+"""MAX-бот: обработчики для студентов (регистрация с паролем, главное меню)"""
 import asyncio
 import logging
 from aiogram import BaseMiddleware, Router, F
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram.types import Message, CallbackQuery
 from bot.fsm import StudentRegistration
 from bot.keyboards import (
     CB_CANCEL,
     CB_HELP,
     CB_REG_BACK,
     CB_RESTART_REG,
-    CB_STUDENT_QR,
     STUDENT_HELP_TEXT,
     STUDENT_INACTIVE_TEXT,
     cancel_menu,
     reg_step_menu,
-    get_qr_menu_inline,
     get_restart_reg_inline,
     get_start_menu_inline,
 )
-from core.qr import generate_diplink, generate_qr_card_bytes
 from core.archive import is_user_archived
 from core.meals import get_rights
-from core.services import get_active_code, get_user_info, save_user_chat_id, verify_student
+from core.services import get_user_info, save_user_chat_id, verify_student
 
 logger = logging.getLogger(__name__)
 router = Router(name="max_user")
@@ -51,10 +48,6 @@ class RememberChatMiddleware(BaseMiddleware):
 
 router.message.outer_middleware(RememberChatMiddleware())
 router.callback_query.outer_middleware(RememberChatMiddleware())
-
-# Глобальный словарь для хранения ID сообщений студентов
-# Структура: {user_id: {"qr_message_id": int, "received_message_id": int}}
-student_messages = {}
 
 REGISTRATION_DENIED_TEXTS = {
     "not_in_list": (
@@ -252,29 +245,6 @@ async def process_password(message: Message, state: FSMContext):
         await message.answer(text, reply_markup=get_restart_reg_inline())
 
 
-# --- Кнопки под QR-карточкой ---
-@router.callback_query(F.data == CB_STUDENT_QR)
-async def cb_student_qr(callback: CallbackQuery):
-    """Обновить QR: старое сообщение удаляется, приходит новая карточка"""
-    await callback.answer()
-
-    info = await get_user_info(callback.from_user.id)
-    if not info or not info.get("is_verified"):
-        await callback.message.edit_text("❌ Сначала пройдите регистрацию (/start).")
-        return
-    if is_inactive_student(info):
-        await callback.message.edit_text(STUDENT_INACTIVE_TEXT)
-        return
-
-    # Удаляем старую карточку (если сообщение слишком старое — просто шлём новую)
-    try:
-        await callback.message.delete()
-    except Exception as e:
-        logger.warning("Не удалось удалить старое сообщение с QR: %s", e)
-
-    await send_qr_card(callback.message, callback.from_user.id)
-
-
 @router.callback_query(F.data == CB_HELP)
 async def cb_help(callback: CallbackQuery):
     await callback.answer()
@@ -340,43 +310,3 @@ async def send_student_home(message: Message, user_id: int):
         "Право можно подарить другу кнопкой «Угостить друга». Неиспользованное право сгорает в конце суток.",
         reply_markup=get_start_menu_inline("student"),
     )
-
-
-# --- Запасной режим пилота: карточка с личным QR и буквенным кодом ---
-async def send_qr_card(message: Message, user_id: int):
-    """Карточка: QR + крупный код; под сообщением кнопки [Обновить QR] и [Инструкция]"""
-    code = await get_active_code(user_id)
-    if not code:
-        await message.answer("❌ Ошибка: код не найден. Пройдите регистрацию заново.")
-        return
-
-    # Удаляем старое сообщение с QR, если есть
-    if user_id in student_messages and "qr_message_id" in student_messages[user_id]:
-        try:
-            await message.bot.delete_message(
-                chat_id=message.chat.id,
-                message_id=student_messages[user_id]["qr_message_id"]
-            )
-        except Exception as e:
-            logger.warning("Не удалось удалить старое QR-сообщение: %s", e)
-
-    diplink = generate_diplink(code, is_max=True)
-    qr_buf = generate_qr_card_bytes(diplink, code)
-    qr_file = BufferedInputFile(qr_buf.read(), filename=f"qr_{code}.png")
-    caption = (
-        f"✅ Ваш код на сегодня: {code}\n"
-        f"Покажите этот QR-код сотруднику столовой.\n"
-        f"⚠️ Код обновляется каждый день, вчерашний QR не сработает."
-    )
-
-    sent_message = await message.answer_photo(
-        photo=qr_file,
-        caption=caption,
-        reply_markup=get_qr_menu_inline(),
-    )
-
-    # Сохраняем ID нового сообщения
-    if user_id not in student_messages:
-        student_messages[user_id] = {}
-    student_messages[user_id]["qr_message_id"] = sent_message.message_id
-

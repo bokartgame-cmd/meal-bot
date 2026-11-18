@@ -7,8 +7,7 @@ from aiogram.enums import ParseMode
 from aiogram_max import create_bot
 import config
 from data.init_db import init_db
-from bot.routers import user, staff, admin, feedback, meal
-from bot.daily_qr import daily_qr_loop
+from bot.routers import user, admin, feedback, meal
 from core.archive import archive_inactive_students
 from bot.keyboards import ROLE_ADMIN, get_start_menu_inline
 from core.backup import backup_loop, ensure_backup_today
@@ -68,14 +67,11 @@ async def main():
 
     # 4. Запуск polling (admin первым, чтобы его callback'и перехватывались раньше)
     dp = Dispatcher()
-    # meal раньше staff: его deep-link обработчики (общий QR, подарки) должны сработать до запасного личного QR
-    dp.include_routers(admin.router, meal.router, staff.router, feedback.router, user.router)
+    dp.include_routers(admin.router, meal.router, feedback.router, user.router)
 
-    # 5. Фоновые задачи: возврат прав по таймауту, (запасная) рассылка личных QR и бэкап БД (polling не затрагивают)
+    # 5. Фоновые задачи: возврат прав по таймауту и бэкап БД (polling не затрагивают)
     bg_tasks = [asyncio.create_task(announce_restart(bot)),
                 asyncio.create_task(meal.expire_loop(bot))]  # возврат прав без подтверждения сотрудника
-    if config.DAILY_QR_ENABLED:
-        bg_tasks.append(asyncio.create_task(daily_qr_loop(bot)))
     if config.BACKUP_ENABLED:
         bg_tasks.append(asyncio.create_task(backup_loop()))
 

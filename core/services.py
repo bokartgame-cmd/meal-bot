@@ -5,15 +5,10 @@ from datetime import datetime, timedelta
 from typing import Optional
 from datetime import datetime
 import pytz
-from config import DB_PATH, BOT_TZ, ALLOWED_STAFF_ATTEMPTS, STAFF_COOLDOWN_SECONDS
+from config import DB_PATH, BOT_TZ
 
 # Исключаем визуально похожие символы: 0, O, 1, I, l
 SAFE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-
-# Глобальный словарь для отслеживания неудачных попыток сотрудников
-# {staff_id: {"count": int, "last_attempt": datetime}}
-failed_attempts = {}
-
 
 def normalize(text: str) -> str:
     """Нормализация текста: trim, lower, ё->е"""
@@ -25,35 +20,6 @@ def normalize(text: str) -> str:
 def generate_unique_code(length: int = 6) -> str:
     """Генерация криптостойкого кода"""
     return ''.join(secrets.choice(SAFE_ALPHABET) for _ in range(length))
-
-async def get_active_code(user_id: int) -> str:
-    """Возвращает актуальный код на сегодня. Пустая строка, если пользователь неактивен."""
-    today = datetime.now(pytz.timezone(BOT_TZ)).strftime('%Y-%m-%d')
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute(
-            "SELECT unique_code, code_date, is_active FROM users WHERE user_id = ?",
-            (user_id,)
-        )
-        user = await cur.fetchone()
-        if not user:
-            return ""
-        # 🔒 Неактивным студентам код не выдаём
-        if not user["is_active"]:
-            return ""
-        if user['code_date'] == today:
-            return user['unique_code']
-        while True:
-            new_code = generate_unique_code()
-            cur = await db.execute("SELECT 1 FROM users WHERE unique_code = ?", (new_code,))
-            if not await cur.fetchone():
-                break
-        await db.execute(
-            "UPDATE users SET unique_code = ?, code_date = ? WHERE user_id = ?",
-            (new_code, today, user_id)
-        )
-        await db.commit()
-        return new_code
 
 async def verify_student(user_id: int, full_name: str, group: str, password: str) -> dict:
     """
@@ -155,67 +121,6 @@ async def get_user_info(user_id: int) -> dict | None:
         else:
             logger.warning(f"GET_INFO FAILED: Запись для {user_id} не найдена")
             return None
-
-
-async def process_issuance(code: str, issued_by: int, method: str) -> dict:
-    """
-    Запасной режим (пилот): выдача по личному коду студента. Новая схема — core/meals.py.
-    Выдача тратит то же право на обед, что и новая схема, поэтому за сутки обедов
-    не больше, чем прав (учитываются и подарки).
-    :param code: Уникальный код студента
-    :param issued_by: ID сотрудника (или админа), который совершает выдачу
-    :param method: Способ выдачи ("qr" или "manual")
-    """
-    from core.meals import consume_one_right
-
-    today = datetime.now(pytz.timezone(BOT_TZ)).strftime('%Y-%m-%d')
-
-    async with aiosqlite.connect(DB_PATH, isolation_level=None) as db:
-        db.row_factory = aiosqlite.Row
-
-        # 1. Ищем пользователя по коду
-        cur = await db.execute(
-            "SELECT user_id, full_name, group_number, is_active FROM users WHERE unique_code = ?",
-            (code,)
-        )
-        user = await cur.fetchone()
-
-        if not user or not user["is_active"]:
-            return {
-                "status": "error",
-                "message": "❌ Код не найден или пользователь неактивен."
-            }
-
-        # 🔧 Форматируем для красивого вывода
-        display_name = user["full_name"].title()
-        display_group = user["group_number"].upper()
-
-        # 2. Списываем право на сегодня и пишем выдачу в журнал одной транзакцией
-        await db.execute("BEGIN IMMEDIATE")
-        try:
-            if not await consume_one_right(db, user["user_id"], today):
-                await db.execute("ROLLBACK")
-                return {
-                    "status": "error",
-                    "message": f"⚠️ Нет права на обед сегодня (уже выдано или подарено): "
-                               f"{display_name} ({display_group})."
-                }
-            cur = await db.execute(
-                "INSERT INTO meals_log (user_id, issued_at, issued_by, method) VALUES (?, ?, ?, ?)",
-                (user["user_id"], datetime.now(pytz.timezone(BOT_TZ)).replace(tzinfo=None), issued_by, method)
-            )
-            meal_id = cur.lastrowid
-            await db.execute("COMMIT")
-        except Exception:
-            await db.execute("ROLLBACK")
-            raise
-
-        return {
-            "status": "success",
-            "message": f"✅ Выдано: {display_name} ({display_group})",
-            "student_user_id": int(user["user_id"]),
-            "meal_id": int(meal_id),
-        }
 
 
 async def import_students_from_csv(file_path: str) -> dict:
@@ -339,37 +244,6 @@ async def save_user_chat_id(user_id: int, chat_id: int) -> None:
             "UPDATE users SET chat_id = ? WHERE user_id = ? AND (chat_id IS NULL OR chat_id != ?)",
             (int(chat_id), int(user_id), int(chat_id)),
         )
-        await db.commit()
-
-
-async def get_students_for_daily_qr(today: str) -> list:
-    """Студенты, которым сегодня ещё не отправлен QR: активные, прошедшие регистрацию,
-    с известным chat_id личного диалога. Возвращает [{"user_id", "chat_id"}, ...]"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute(
-            """SELECT user_id, chat_id FROM users
-               WHERE role = 'student' AND is_verified = 1 AND is_active = 1
-                 AND chat_id IS NOT NULL
-                 AND (qr_sent_date IS NULL OR qr_sent_date != ?)""",
-            (today,),
-        )
-        return [dict(r) for r in await cur.fetchall()]
-
-
-async def count_students_without_chat(today: str) -> int:
-    """Сколько активных студентов нельзя охватить рассылкой (chat_id ещё неизвестен)"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            """SELECT COUNT(*) FROM users
-               WHERE role = 'student' AND is_verified = 1 AND is_active = 1
-                 AND chat_id IS NULL""")
-        return (await cur.fetchone())[0]
-
-
-async def mark_qr_sent(user_id: int, today: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET qr_sent_date = ? WHERE user_id = ?", (today, user_id))
         await db.commit()
 
 

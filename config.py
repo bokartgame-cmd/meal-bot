@@ -21,11 +21,6 @@ MAX_API_BASE_URL = os.getenv("MAX_API_BASE_URL", "https://platform-api.max.ru").
 # === Общие настройки ===
 # Часовой пояс бота (Владивосток, UTC+10): по нему считаются «сегодня», коды на день, отчёты и рассылка
 BOT_TZ = os.getenv("BOT_TZ", "Asia/Vladivostok")
-# Ежедневная автоматическая рассылка личных QR-кодов студентам (время по BOT_TZ).
-# В новой схеме (общий QR на раздаче) рассылка отключена; включать только как запасной режим.
-DAILY_QR_ENABLED = os.getenv("DAILY_QR_ENABLED", "0").lower() in ("1", "true", "yes", "on")
-DAILY_QR_HOUR = int(os.getenv("DAILY_QR_HOUR", "10"))
-DAILY_QR_MINUTE = int(os.getenv("DAILY_QR_MINUTE", "0"))
 # Ежедневный бэкап БД (время по BOT_TZ); хранится BACKUP_KEEP последних копий (по одной на день)
 BACKUP_ENABLED = os.getenv("BACKUP_ENABLED", "1").lower() not in ("0", "false", "no", "off")
 BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", "3"))
@@ -44,11 +39,6 @@ MEAL_QR_PAYLOAD = os.getenv("MEAL_QR_PAYLOAD", "meal")
 MEAL_CONFIRM_TIMEOUT_MIN = int(os.getenv("MEAL_CONFIRM_TIMEOUT_MIN", "10"))
 # Как часто (сек) проверять просроченные запросы
 MEAL_EXPIRE_CHECK_SECONDS = int(os.getenv("MEAL_EXPIRE_CHECK_SECONDS", "30"))
-# Запасной режим на время пилота: сканирование личного QR студента сотрудником
-LEGACY_QR_ENABLED = os.getenv("LEGACY_QR_ENABLED", "1").lower() not in ("0", "false", "no", "off")
-ALLOWED_STAFF_ATTEMPTS = 10
-STAFF_COOLDOWN_SECONDS = 60
-QR_PAYLOAD_MAX_LEN = 128
 
 # Флаг для отладки в воскресенье (убрать в production)
 DEBUG_IGNORE_WEEKDAY = os.getenv("DEBUG_IGNORE_WEEKDAY", "false").lower() in ("1", "true", "yes")

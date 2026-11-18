@@ -1,15 +1,12 @@
 """UI-константы и фабрики inline-клавиатур для MAX"""
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-import config
-
 # --- Роли (иерархия: admin > staff > student) ---
 ROLE_ADMIN = "admin"
 ROLE_STAFF = "staff"
 ROLE_STUDENT = "student"
 
 # --- Тексты кнопок ---
-STUDENT_BTN_QR = "🎫 Мой QR-код"
 STUDENT_BTN_GIFT = "🎁 Угостить друга"
 STAFF_BTN_START = "▶️ Начать выдачу"
 BTN_CONFIRM = "✅ Подтвердить"
@@ -35,7 +32,6 @@ STUDENT_INACTIVE_TEXT = (
 )
 
 # --- Callback data ---
-CB_STUDENT_QR = "student_qr"
 CB_STAFF_START = "staff_start"          # сотрудник: «Начать выдачу»
 CB_MEAL_CONFIRM = "meal_ok"             # студент: подтвердить запрос после скана общего QR
 CB_MEAL_GIVE_PREFIX = "meal_give:"      # сотрудник: подтвердить выдачу (meal_give:<id запроса>)
@@ -134,8 +130,6 @@ def get_start_menu_inline(role: str) -> InlineKeyboardMarkup:
         keyboard.append([InlineKeyboardButton(text=BTN_HELP, callback_data=CB_HELP)])
     else:  # student
         keyboard.append([InlineKeyboardButton(text=STUDENT_BTN_GIFT, callback_data=CB_GIFT_NEW)])
-        if config.LEGACY_QR_ENABLED:  # запасной режим пилота: личный QR
-            keyboard.append([InlineKeyboardButton(text=STUDENT_BTN_QR, callback_data=CB_STUDENT_QR)])
         keyboard.append([InlineKeyboardButton(text=STUDENT_BTN_FEEDBACK, callback_data=CB_FEEDBACK)])
         keyboard.append([InlineKeyboardButton(text=BTN_HELP, callback_data=CB_HELP)])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -206,23 +200,6 @@ def get_archive_confirm_inline(confirm_cb: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="✅ Да, удалить безвозвратно", callback_data=confirm_cb)],
         [InlineKeyboardButton(text=BTN_CANCEL, callback_data=CB_ARCHIVE_CANCEL)],
     ])
-
-
-def get_qr_menu_inline() -> InlineKeyboardMarkup:
-    """Клавиатура под карточкой студента: 1-я — обновить QR, 2-я — инструкция"""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=STUDENT_BTN_GIFT, callback_data=CB_GIFT_NEW)],
-            [InlineKeyboardButton(text="🔄 Обновить QR-код", callback_data=CB_STUDENT_QR)],
-            [InlineKeyboardButton(text=STUDENT_BTN_FEEDBACK, callback_data=CB_FEEDBACK)],
-            [InlineKeyboardButton(text=BTN_HELP, callback_data=CB_HELP)],
-        ]
-    )
-
-
-def get_qr_resend_inline() -> InlineKeyboardMarkup:
-    """Алиас для обратной совместимости"""
-    return get_qr_menu_inline()
 
 
 def cancel_menu() -> InlineKeyboardMarkup:

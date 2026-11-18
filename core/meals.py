@@ -110,17 +110,6 @@ async def get_rights(user_id: int) -> int | None:
             raise
 
 
-async def consume_one_right(db, user_id: int, day: str) -> bool:
-    """Списать одно право (для запасного режима со сканированием личного QR).
-    Вызывается внутри открытой транзакции."""
-    await _ensure_rights(db, user_id, day)
-    cur = await db.execute(
-        "UPDATE meal_rights SET rights = rights - 1 WHERE user_id = ? AND day = ? AND rights > 0",
-        (int(user_id), day),
-    )
-    return cur.rowcount == 1
-
-
 # ====================
 # СМЕНА ВЫДАЧИ
 # ====================
