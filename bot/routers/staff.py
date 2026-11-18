@@ -2,18 +2,12 @@
 import logging
 from aiogram import Router, F
 from aiogram.filters import CommandStart, CommandObject
-from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 import config
-from bot.fsm import StaffManualCode
 from bot.keyboards import (
-    BTN_CANCEL,
-    CB_CANCEL,
-    CB_STAFF_CODE,
     STUDENT_MEAL_RECEIVED_TEXT,
     STUDENT_RATE_PROMPT,
     get_start_menu_inline,
-    get_cancel_inline,
     get_rating_inline,
 )
 from core.max_api import send_text_to_user
@@ -67,49 +61,6 @@ async def process_qr_scan(message: Message, command: CommandObject):
 
     result = await process_issuance(code, message.from_user.id, method="qr")
     await message.answer(result["message"], reply_markup=get_start_menu_inline(info["role"]))
-
-    # Уведомляем студента
-    await notify_student(message, result)
-
-@router.callback_query(F.data == CB_STAFF_CODE)
-async def cb_enter_code(callback: CallbackQuery, state: FSMContext):
-    """Кнопка меню: переход в режим ожидания кода (запасной режим пилота)"""
-    if not config.LEGACY_QR_ENABLED:
-        await callback.answer("Ручной ввод кода отключён.", show_alert=True)
-        return
-    info = await get_user_info(callback.from_user.id)
-    if not info or info["role"] not in ("staff", "admin"):
-        await callback.answer("⛔ У вас нет прав для выдачи питания.", show_alert=True)
-        return
-
-    await callback.message.edit_text(
-        "Пришлите код питания студента текстом в чат (например, K7M2PX).",
-        reply_markup=get_cancel_inline()
-    )
-    await state.set_state(StaffManualCode.waiting_code)
-    await callback.answer()
-
-@router.callback_query(F.data == CB_CANCEL, StaffManualCode.waiting_code)
-async def code_cancel(callback: CallbackQuery, state: FSMContext):
-    """Отмена ввода кода"""
-    await state.clear()
-    info = await get_user_info(callback.from_user.id)
-    await callback.message.edit_text(
-        "Действие отменено.",
-        reply_markup=get_start_menu_inline(info["role"] if info else "student")
-    )
-    await callback.answer()
-
-@router.message(StaffManualCode.waiting_code, F.text)
-async def code_process(message: Message, state: FSMContext):
-    """Обработка введенного текстом кода"""
-    await state.clear()
-    code = message.text.strip().upper()
-
-    info = await get_user_info(message.from_user.id)
-    result = await process_issuance(code, message.from_user.id, method="manual")
-
-    await message.answer(result["message"], reply_markup=get_start_menu_inline(info["role"] if info else "student"))
 
     # Уведомляем студента
     await notify_student(message, result)

@@ -15,7 +15,6 @@ STAFF_BTN_START = "▶️ Начать выдачу"
 BTN_CONFIRM = "✅ Подтвердить"
 BTN_REVOKE_GIFT = "↩️ Забрать подарок обратно"
 ADMIN_BTN_QR = "🖨 QR для раздачи"
-STAFF_BTN_CODE = "✍️ Ввести код вручную"
 ADMIN_BTN_STATS = "📊 Статистика"
 BTN_HELP = "📖 Инструкция"
 BTN_CANCEL = "❌ Отмена"
@@ -43,7 +42,6 @@ CB_MEAL_GIVE_PREFIX = "meal_give:"      # сотрудник: подтверди
 CB_GIFT_NEW = "gift_new"                # студент: «Угостить друга»
 CB_GIFT_REVOKE_PREFIX = "gift_revoke:"  # студент: забрать подарок (gift_revoke:<токен>)
 CB_ADMIN_QR = "admin_qr"                # администратор: картинка общего QR для печати
-CB_STAFF_CODE = "staff_code"
 CB_HELP = "help"
 CB_CANCEL = "cancel"
 CB_REG_BACK = "reg_back"
@@ -133,8 +131,6 @@ def get_start_menu_inline(role: str) -> InlineKeyboardMarkup:
         keyboard.append([InlineKeyboardButton(text=ADMIN_BTN_RESTART, callback_data=CB_ADMIN_RESTART)])
     elif role == ROLE_STAFF:
         keyboard.append([InlineKeyboardButton(text=STAFF_BTN_START, callback_data=CB_STAFF_START)])
-        if config.LEGACY_QR_ENABLED:  # запасной режим пилота: ручной ввод личного кода
-            keyboard.append([InlineKeyboardButton(text=STAFF_BTN_CODE, callback_data=CB_STAFF_CODE)])
         keyboard.append([InlineKeyboardButton(text=BTN_HELP, callback_data=CB_HELP)])
     else:  # student
         keyboard.append([InlineKeyboardButton(text=STUDENT_BTN_GIFT, callback_data=CB_GIFT_NEW)])
@@ -247,7 +243,7 @@ def reg_step_menu() -> InlineKeyboardMarkup:
 
 
 def get_cancel_inline() -> InlineKeyboardMarkup:
-    """Inline-кнопка отмены для ввода кода сотрудником"""
+    """Inline-кнопка отмены (ввод дат статистики администратором)"""
     return cancel_menu()
 
 

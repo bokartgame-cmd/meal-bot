@@ -44,7 +44,7 @@ MEAL_QR_PAYLOAD = os.getenv("MEAL_QR_PAYLOAD", "meal")
 MEAL_CONFIRM_TIMEOUT_MIN = int(os.getenv("MEAL_CONFIRM_TIMEOUT_MIN", "10"))
 # Как часто (сек) проверять просроченные запросы
 MEAL_EXPIRE_CHECK_SECONDS = int(os.getenv("MEAL_EXPIRE_CHECK_SECONDS", "30"))
-# Запасной режим на время пилота: сканирование личного QR студента сотрудником и ручной ввод кода
+# Запасной режим на время пилота: сканирование личного QR студента сотрудником
 LEGACY_QR_ENABLED = os.getenv("LEGACY_QR_ENABLED", "1").lower() not in ("0", "false", "no", "off")
 ALLOWED_STAFF_ATTEMPTS = 10
 STAFF_COOLDOWN_SECONDS = 60

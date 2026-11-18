@@ -8,10 +8,6 @@ class StudentRegistration(StatesGroup):
     password = State()
 
 
-class StaffManualCode(StatesGroup):
-    waiting_code = State()
-
-
 class AdminStats(StatesGroup):
     choosing_period = State()
     custom_from = State()
