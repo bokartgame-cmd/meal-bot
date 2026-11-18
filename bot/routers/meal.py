@@ -14,6 +14,7 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
+from aiogram.enums import ParseMode
 
 import config
 from bot.fsm import GiftAccept
@@ -287,6 +288,7 @@ async def cb_gift_new(callback: CallbackQuery):
         "Подарок можно принять один раз и только до конца суток.\n"
         "Ваше право на обед передано в подарок. Пока друг не открыл ссылку, "
         "вы можете забрать его обратно.",
+        parse_mode=ParseMode.DISABLED,
         reply_markup=get_gift_revoke_inline(res["token"]),
     )
 
