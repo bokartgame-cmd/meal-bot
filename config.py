@@ -32,9 +32,7 @@ FEEDBACK_DAILY_LIMIT = int(os.getenv("FEEDBACK_DAILY_LIMIT", "5"))
 FEEDBACK_MAX_LEN = int(os.getenv("FEEDBACK_MAX_LEN", "1000"))
 # Файл-пометка «кто попросил перезапуск»: после старта бот сообщает ему, что вернулся
 RESTART_NOTICE_PATH = BASE_DIR / "restart_notice.json"
-# === Новая схема выдачи: общий статичный QR + подтверждение сотрудником ===
-# Содержимое общего QR на раздаче: диплинк https://max.ru/<бот>?start=<MEAL_QR_PAYLOAD>
-MEAL_QR_PAYLOAD = os.getenv("MEAL_QR_PAYLOAD", "meal")
+# === Выдача питания: кнопка студента + подтверждение сотрудником ===
 # Через сколько минут права возвращаются студенту, если сотрудник не нажал «Подтвердить»
 MEAL_CONFIRM_TIMEOUT_MIN = int(os.getenv("MEAL_CONFIRM_TIMEOUT_MIN", "10"))
 # Как часто (сек) проверять просроченные запросы

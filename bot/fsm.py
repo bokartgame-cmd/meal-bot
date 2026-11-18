@@ -19,3 +19,7 @@ class AdminImport(StatesGroup):
 
 class StudentFeedback(StatesGroup):
     waiting_text = State()
+
+
+class GiftAccept(StatesGroup):
+    waiting_code = State()

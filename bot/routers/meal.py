@@ -1,24 +1,28 @@
-"""MAX-бот: новая схема выдачи — общий QR, подтверждение студента и сотрудника, подарки.
+"""MAX-бот: выдача питания — кнопка студента, подтверждение студента и сотрудника, подарки.
 
 Путь одной выдачи:
-  сотрудник «Начать выдачу» -> студент сканирует общий QR (диплинк ?start=<MEAL_QR_PAYLOAD>)
+  сотрудник «Начать выдачу» -> студент нажимает «Получить обед»
   -> студент «Подтвердить» (права резервируются) -> сотруднику «Успешно! Иванов И., 28-143.
   Обедов к выдаче: N» -> сотрудник «Подтвердить» (запись в журнал, студенту «Обед получен»).
 Без подтверждения сотрудника права возвращаются студенту по таймауту (expire_loop).
 """
 import asyncio
 import logging
+import re
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 
 import config
+from bot.fsm import GiftAccept
 from bot.keyboards import (
-    CB_ADMIN_QR,
+    CB_GIFT_ACCEPT,
     CB_GIFT_NEW,
     CB_GIFT_REVOKE_PREFIX,
     CB_MEAL_CONFIRM,
+    CB_MEAL_GET,
     CB_MEAL_GIVE_PREFIX,
     CB_STAFF_START,
     STUDENT_MEAL_RECEIVED_TEXT,
@@ -33,7 +37,7 @@ from bot.routers.user import RememberChatMiddleware
 from core import meals
 from core.feedback import neutralize
 from core.max_api import delete_message, edit_message_text, send_text_to_user
-from core.qr import generate_diplink, generate_qr_card_bytes
+from core.qr import generate_diplink
 from core.services import get_user_info
 
 logger = logging.getLogger(__name__)
@@ -128,31 +132,32 @@ async def cb_start_issuance(callback: CallbackQuery):
 
 
 # ====================
-# СТУДЕНТ: СКАН ОБЩЕГО QR
+# СТУДЕНТ: КНОПКА «ПОЛУЧИТЬ ОБЕД»
 # ====================
 
-@router.message(CommandStart(deep_link=True, magic=F.args == config.MEAL_QR_PAYLOAD))
-async def on_scan(message: Message):
-    """Студент отсканировал общий QR с бумажки на раздаче"""
-    uid = message.from_user.id
+@router.callback_query(F.data == CB_MEAL_GET)
+async def cb_meal_get(callback: CallbackQuery):
+    """Студент нажал «Получить обед»: проверяем выдачу и права, просим подтвердить"""
+    await callback.answer()
+    uid = callback.from_user.id
     if await _is_staff(uid):
-        await message.answer("ℹ️ Этот QR для студентов. Чтобы вести выдачу, нажмите «Начать выдачу».",
-                             reply_markup=get_start_menu_inline((await get_user_info(uid))["role"]))
+        await callback.message.answer("ℹ️ Получать обеды могут только студенты. "
+                                      "Чтобы вести выдачу, нажмите «Начать выдачу».")
         return
 
     check = await meals.check_scan(uid)
     status = check["status"]
     if status == "not_student":
-        await message.answer(TEXT_NOT_STUDENT)
+        await callback.message.answer(TEXT_NOT_STUDENT)
     elif status == "no_session":
-        await message.answer(TEXT_NO_SESSION)
+        await callback.message.answer(TEXT_NO_SESSION)
     elif status == "pending":
-        await message.answer(TEXT_PENDING)
+        await callback.message.answer(TEXT_PENDING)
     elif status == "no_rights":
-        await message.answer(TEXT_NO_RIGHTS)   # сотруднику сообщение не уходит
+        await callback.message.answer(TEXT_NO_RIGHTS)   # сотруднику сообщение не уходит
     else:
-        await message.answer(
-            f"Вы отсканировали QR для получения обеда.\nОбедов к получению: {check['rights']}.\n\n"
+        await callback.message.answer(
+            f"Обедов к получению: {check['rights']}.\n\n"
             "Нажмите «Подтвердить», когда будете у раздачи. Если не нажмёте, ничего не спишется.",
             reply_markup=get_student_confirm_inline(),
         )
@@ -236,7 +241,7 @@ async def cb_staff_confirm(callback: CallbackQuery):
     if status == "expired":
         await callback.answer()
         await _safe_edit(callback, "⌛ Время подтверждения вышло, права возвращены студенту. "
-                                   "Пусть студент отсканирует QR ещё раз.")
+                                   "Пусть студент нажмёт «Получить обед» ещё раз.")
         return
 
     await callback.answer()
@@ -272,11 +277,14 @@ async def cb_gift_new(callback: CallbackQuery):
         return
     await callback.answer()
     link = generate_diplink(f"{meals.GIFT_PREFIX}{res['token']}", is_max=True)
+    code = _pretty_code(res["token"])
+    logger.info("Подарок: студент %s создал ссылку %s", uid, link)
     await callback.message.answer(
         "🎁 Ссылка для друга:\n"
         f"{link}\n\n"
-        "Перешлите её другу: он откроет её и получит ваше право на обед. "
-        "Ссылка работает один раз и только до конца суток.\n"
+        f"Если ссылка не открывается, друг может нажать «🎟 Ввести код подарка» и отправить код:\n{code}\n\n"
+        "Перешлите это другу: он получит ваше право на обед. "
+        "Подарок можно принять один раз и только до конца суток.\n"
         "Ваше право на обед передано в подарок. Пока друг не открыл ссылку, "
         "вы можете забрать его обратно.",
         reply_markup=get_gift_revoke_inline(res["token"]),
@@ -296,11 +304,18 @@ async def cb_gift_revoke(callback: CallbackQuery):
     await _safe_edit(callback, text)
 
 
-@router.message(CommandStart(deep_link=True, magic=F.args.startswith(meals.GIFT_PREFIX)))
-async def on_gift_link(message: Message, command: CommandObject):
-    """Друг открыл ссылку-подарок"""
-    uid = message.from_user.id
-    token = (command.args or "")[len(meals.GIFT_PREFIX):]
+def _pretty_code(token: str) -> str:
+    """16 hex-символов группами по 4: ab12-cd34-ef56-7890"""
+    return "-".join(token[i:i + 4] for i in range(0, len(token), 4))
+
+
+def _parse_code(text: str) -> str:
+    """Код подарка из текста пользователя: без дефисов, пробелов и регистра"""
+    return re.sub(r"[^0-9a-f]", "", (text or "").lower())
+
+
+async def _accept_gift(message: Message, uid: int, token: str) -> None:
+    """Друг принимает подарок (по ссылке или по коду): право переносится ему"""
     if await _is_staff(uid):
         await message.answer("ℹ️ Подарок может принять только студент.")
         return
@@ -309,53 +324,56 @@ async def on_gift_link(message: Message, command: CommandObject):
     if status == "not_student":
         await message.answer(
             "Чтобы принять подарок, сначала пройдите регистрацию в боте (/start), "
-            "а потом откройте ссылку ещё раз."
+            "а потом откройте ссылку или введите код ещё раз."
         )
     elif status != "ok":
         await message.answer(GIFT_DENIED_TEXTS.get(status, GIFT_DENIED_TEXTS["invalid"]))
     else:
         await message.answer(
             f"🎁 Вам подарили обед! Обедов на сегодня: {res['rights']}.\n"
-            "Отсканируйте QR на раздаче и подтвердите запрос."
+            "Нажмите «Получить обед», когда будете у раздачи.",
+            reply_markup=get_start_menu_inline("student"),
         )
         await _notify(message.bot, res["giver_id"], "🎉 Друг принял ваш подарок.")
 
 
-# ====================
-# АДМИНИСТРАТОР: ОБЩИЙ QR ДЛЯ ПЕЧАТИ
-# ====================
-
-async def _send_shared_qr(message: Message) -> None:
-    link = generate_diplink(config.MEAL_QR_PAYLOAD, is_max=True)
-    buf = generate_qr_card_bytes(link, "ОБЕД")
-    await message.answer_photo(
-        photo=BufferedInputFile(buf.read(), filename="meal_qr.png"),
-        caption=(
-            "🖨 Общий QR для раздачи. Распечатайте один раз и повесьте на раздаче: "
-            "он не меняется и работает каждый день, пока сотрудник не нажал «Начать выдачу» — "
-            "бот отвечает «Выдача сейчас не ведётся».\n"
-            f"Ссылка: {link}"
-        ),
-    )
+@router.message(CommandStart(deep_link=True, magic=F.args.startswith(meals.GIFT_PREFIX)))
+async def on_gift_link(message: Message, command: CommandObject, state: FSMContext):
+    """Друг открыл ссылку-подарок"""
+    await state.clear()
+    token = (command.args or "")[len(meals.GIFT_PREFIX):].lstrip("_")  # lstrip: старые ссылки gift_<токен>
+    logger.info("Подарок: пользователь %s открыл ссылку (payload=%r)", message.from_user.id, command.args)
+    await _accept_gift(message, message.from_user.id, token)
 
 
-@router.message(Command("qr"))
-async def cmd_qr(message: Message):
-    info = await get_user_info(message.from_user.id)
-    if not info or info.get("role") != "admin":
-        await message.answer("⛔ Только для администратора.")
-        return
-    await _send_shared_qr(message)
-
-
-@router.callback_query(F.data == CB_ADMIN_QR)
-async def cb_admin_qr(callback: CallbackQuery):
+@router.callback_query(F.data == CB_GIFT_ACCEPT)
+async def cb_gift_accept(callback: CallbackQuery, state: FSMContext):
+    """Запасной путь: код подарка вводится вручную, если ссылка не открывается"""
     await callback.answer()
-    info = await get_user_info(callback.from_user.id)
-    if not info or info.get("role") != "admin":
-        await callback.message.answer("⛔ Только для администратора.")
+    await state.set_state(GiftAccept.waiting_code)
+    await callback.message.answer("🎟 Пришлите код подарка (его прислал друг), например: ab12-cd34-ef56-7890")
+
+
+@router.message(Command("gift"))
+async def cmd_gift(message: Message, command: CommandObject, state: FSMContext):
+    await state.clear()
+    token = _parse_code(command.args or "")
+    if not token:
+        await state.set_state(GiftAccept.waiting_code)
+        await message.answer("🎟 Пришлите код подарка (его прислал друг), например: ab12-cd34-ef56-7890")
         return
-    await _send_shared_qr(callback.message)
+    await _accept_gift(message, message.from_user.id, token)
+
+
+@router.message(GiftAccept.waiting_code, F.text, ~F.text.startswith("/"))
+async def on_gift_code(message: Message, state: FSMContext):
+    token = _parse_code(message.text)
+    await state.clear()
+    if len(token) != 16:
+        await message.answer("❌ Код не похож на код подарка. Нажмите «🎟 Ввести код подарка» и попробуйте ещё раз.",
+                             reply_markup=get_start_menu_inline("student"))
+        return
+    await _accept_gift(message, message.from_user.id, token)
 
 
 # ====================
@@ -368,7 +386,7 @@ async def process_expired(bot) -> int:
     for req in expired:
         if req["restored"]:
             text = ("⌛ Сотрудник не подтвердил выдачу вовремя. Право на обед вернулось к вам — "
-                    "отсканируйте QR ещё раз, когда будете у раздачи.")
+                    "нажмите «Получить обед» ещё раз, когда будете у раздачи.")
         else:
             text = "⌛ Сутки закончились, а выдача не была подтверждена. Право на обед сгорело."
         await _notify(bot, req["user_id"], text)

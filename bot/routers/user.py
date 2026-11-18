@@ -100,7 +100,7 @@ async def _delete_by_id(bot, chat_id, message_id):
 
 @router.message(CommandStart(deep_link=False))
 async def cmd_start(message: Message, state: FSMContext):
-    """Точка входа: регистрация, QR-карточка студента или меню сотрудника"""
+    """Точка входа: регистрация, главное меню студента или меню сотрудника"""
     await state.clear()
     info = await get_user_info(message.from_user.id)
 
@@ -293,7 +293,7 @@ async def handle_text_without_state(message: Message, state: FSMContext):
     await process_full_name(message, state)
 
 
-# --- Главное меню студента (новая схема: общий QR на раздаче) ---
+# --- Главное меню студента (кнопка «Получить обед») ---
 async def send_student_home(message: Message, user_id: int):
     """Сколько прав на обед у студента сегодня и что делать дальше"""
     rights = await get_rights(user_id)
@@ -306,7 +306,7 @@ async def send_student_home(message: Message, user_id: int):
         status = "🍽 На сегодня права на обед нет: оно уже использовано или подарено."
     await message.answer(
         f"{status}\n\n"
-        "Чтобы получить обед, отсканируйте QR-код на раздаче и подтвердите запрос в чате. "
+        "Чтобы получить обед, нажмите «Получить обед» у раздачи и подтвердите запрос. "
         "Право можно подарить другу кнопкой «Угостить друга». Неиспользованное право сгорает в конце суток.",
         reply_markup=get_start_menu_inline("student"),
     )

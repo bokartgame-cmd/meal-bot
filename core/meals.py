@@ -1,4 +1,4 @@
-"""Новая схема выдачи: права на обед, общий QR, запросы на выдачу, подарки.
+"""Новая схема выдачи: права на обед, запросы на выдачу, подарки.
 
 Инварианты:
 - у студента на каждые сутки (по BOT_TZ) одно право на обед; строка в meal_rights создаётся
@@ -21,8 +21,8 @@ from config import BOT_TZ, DB_PATH
 
 logger = logging.getLogger(__name__)
 
-METHOD_STAFF_CONFIRM = "qr_staff"   # выдача по общему QR с подтверждением сотрудника
-GIFT_PREFIX = "gift_"               # префикс start-параметра диплинка подарка (лимит start — 128 символов)
+METHOD_STAFF_CONFIRM = "qr_staff"   # выдача с подтверждением сотрудника
+GIFT_PREFIX = "gift"                # префикс start-параметра диплинка подарка: только A-Za-z0-9 (лимит start — 128)
 
 
 # ====================
@@ -152,7 +152,7 @@ async def get_active_staff() -> int | None:
 # ====================
 
 async def check_scan(user_id: int) -> dict:
-    """Проверка при скане общего QR (ничего не списывает).
+    """Проверка при нажатии «Получить обед» (ничего не списывает).
     status: ok (+rights) | not_student | no_session | no_rights | pending (запрос уже отправлен)"""
     day = today_str()
     async with _connect() as db:
