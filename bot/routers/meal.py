@@ -288,7 +288,7 @@ async def cb_gift_new(callback: CallbackQuery):
         "Подарок можно принять один раз и только до конца суток.\n"
         "Ваше право на обед передано в подарок. Пока друг не открыл ссылку, "
         "вы можете забрать его обратно.",
-        parse_mode=ParseMode.DISABLED,
+        parse_mode=None,
         reply_markup=get_gift_revoke_inline(res["token"]),
     )
 
