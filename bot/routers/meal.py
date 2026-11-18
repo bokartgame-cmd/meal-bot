@@ -194,6 +194,12 @@ async def cb_student_confirm(callback: CallbackQuery):
     )
 
 
+async def _reply(callback: CallbackQuery, text: str) -> None:
+    """Ответ на нажатие кнопки обычным сообщением (видно всегда, в отличие от toast)"""
+    await callback.answer()
+    await callback.message.answer(text)
+
+
 async def _safe_edit(callback: CallbackQuery, text: str, markup=None) -> None:
     try:
         await callback.message.edit_text(text, reply_markup=markup)
@@ -219,13 +225,13 @@ async def cb_staff_confirm(callback: CallbackQuery):
     status = res["status"]
 
     if status == "forbidden":
-        await callback.answer("⛔ Сейчас выдачу ведёт другой сотрудник.", show_alert=True)
+        await _reply(callback, "⛔ Сейчас выдачу ведёт другой сотрудник.")
         return
     if status == "not_found":
-        await callback.answer("Запрос не найден.", show_alert=True)
+        await _reply(callback, "Запрос не найден.")
         return
     if status == "done":
-        await callback.answer("Выдача уже подтверждена.")
+        await _reply(callback, "ℹ️ Выдача уже подтверждена.")
         return
     if status == "expired":
         await callback.answer()
@@ -256,11 +262,13 @@ async def cb_gift_new(callback: CallbackQuery):
     uid = callback.from_user.id
     res = await meals.create_gift(uid)
     if res["status"] == "not_student":
-        await callback.answer(TEXT_NOT_STUDENT, show_alert=True)
+        # раньше был всплывающий toast, который в MAX легко не заметить, — отвечаем сообщением
+        await _reply(callback, "ℹ️ Угощать друзей могут только зарегистрированные студенты."
+                               if await _is_staff(uid) else TEXT_NOT_STUDENT)
         return
     if res["status"] == "no_rights":
-        await callback.answer("Нет свободного права: оно уже использовано, подарено или ждёт подтверждения выдачи.",
-                              show_alert=True)
+        await _reply(callback, "🎁 Подарить нечего: право на обед сегодня уже использовано, подарено "
+                               "или ждёт подтверждения выдачи. Новое право появится завтра.")
         return
     await callback.answer()
     link = generate_diplink(f"{meals.GIFT_PREFIX}{res['token']}", is_max=True)
