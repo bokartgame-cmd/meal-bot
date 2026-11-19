@@ -3,7 +3,8 @@
 Инварианты:
 - у студента на каждые сутки (по BOT_TZ) одно право на обед; строка в meal_rights создаётся
   при первом обращении за день (равносильно выдаче права в 00:00) и на другой день не переносится;
-- подарок только переносит право от одного студента другому, сумма прав за сутки не растёт;
+- подарок только переносит право от одного студента другому в момент перехода по ссылке,
+  сумма прав за сутки не растёт;
 - право резервируется, когда студент подтвердил запрос; в журнал (meals_log) выдача попадает
   только после подтверждения сотрудником; без подтверждения право возвращается по таймауту;
 - каждое изменение прав — одна атомарная операция в БД (условный UPDATE / BEGIN IMMEDIATE),
@@ -415,8 +416,9 @@ async def pop_confirmed_messages(staff_id: int, keep_request_id: int | None = No
 # ====================
 
 async def create_gift(user_id: int) -> dict:
-    """«Угостить друга»: право списывается у дарителя сразу, создаётся одноразовый токен.
-    status: ok (+token) | not_student | no_rights"""
+    """«Угостить друга»: создаётся одноразовая ссылка. Право НЕ списывается — оно переходит
+    к другу только в момент перехода по ссылке (redeem_gift).
+    status: ok (+token) | not_student | no_rights (дарить нечего уже сейчас)"""
     day = today_str()
     token = secrets.token_hex(8)
     async with _connect() as db:
@@ -425,12 +427,7 @@ async def create_gift(user_id: int) -> dict:
             if not await _get_student(db, user_id):
                 await db.execute("ROLLBACK")
                 return {"status": "not_student"}
-            await _ensure_rights(db, user_id, day)
-            cur = await db.execute(
-                "UPDATE meal_rights SET rights = rights - 1 WHERE user_id = ? AND day = ? AND rights > 0",
-                (int(user_id), day),
-            )
-            if cur.rowcount != 1:
+            if await _ensure_rights(db, user_id, day) <= 0:
                 await db.execute("ROLLBACK")
                 return {"status": "no_rights"}
             await db.execute(
@@ -445,9 +442,12 @@ async def create_gift(user_id: int) -> dict:
 
 
 async def redeem_gift(token: str, user_id: int) -> dict:
-    """Друг открыл ссылку: право переносится ему. Ссылка срабатывает один раз
-    (условный UPDATE статуса и перенос права — в одной транзакции).
-    status: ok (+rights, giver_id) | not_student | invalid | used | revoked | expired | own"""
+    """Друг перешёл по ссылке: право переносится от дарителя к нему ОДНОЙ транзакцией.
+    Безопасность: право списывается у дарителя условным UPDATE (rights > 0), поэтому ушедшее в
+    выдачу, резерв или другой подарок право повторно не передать; ссылка срабатывает один раз
+    (условный UPDATE статуса); даритель проверяется заново (активный студент); в сутки не переносится.
+    Если у дарителя права уже нет — ничего не меняется, ссылка остаётся действующей.
+    status: ok (+rights, giver_id) | not_student | invalid | used | revoked | expired | own | giver_empty"""
     day = today_str()
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
@@ -461,7 +461,8 @@ async def redeem_gift(token: str, user_id: int) -> dict:
             if not gift:
                 await db.execute("ROLLBACK")
                 return {"status": "invalid"}
-            if int(gift["giver_id"]) == int(user_id):
+            giver_id = int(gift["giver_id"])
+            if giver_id == int(user_id):
                 await db.execute("ROLLBACK")
                 return {"status": "own"}
             if gift["status"] != "active":
@@ -470,15 +471,29 @@ async def redeem_gift(token: str, user_id: int) -> dict:
             if gift["day"] != day:
                 await db.execute("ROLLBACK")
                 return {"status": "expired"}        # право прошлых суток сгорело
+            if not await _get_student(db, giver_id):
+                await db.execute("ROLLBACK")
+                return {"status": "giver_empty"}    # даритель больше не вправе получать обеды
+            # 1) право дарителя: списываем только если оно есть прямо сейчас
+            await _ensure_rights(db, giver_id, day)
+            cur = await db.execute(
+                "UPDATE meal_rights SET rights = rights - 1 WHERE user_id = ? AND day = ? AND rights > 0",
+                (giver_id, day),
+            )
+            if cur.rowcount != 1:
+                await db.execute("ROLLBACK")
+                return {"status": "giver_empty"}
+            # 2) ссылка одноразовая
             cur = await db.execute(
                 "UPDATE meal_gifts SET status = 'used', receiver_id = ?, used_at = ? "
                 "WHERE token = ? AND status = 'active'",
                 (int(user_id), _fmt(now_local()), token),
             )
             if cur.rowcount != 1:
-                await db.execute("ROLLBACK")
+                await db.execute("ROLLBACK")        # откат вернёт и списанное у дарителя право
                 return {"status": "used"}
-            await _ensure_rights(db, user_id, day)  # своё право создаём ДО подарка
+            # 3) право получателю (своё право на день создаём ДО подарка)
+            await _ensure_rights(db, user_id, day)
             await db.execute(
                 "UPDATE meal_rights SET rights = rights + 1 WHERE user_id = ? AND day = ?",
                 (int(user_id), day),
@@ -488,15 +503,15 @@ async def redeem_gift(token: str, user_id: int) -> dict:
             )
             rights = (await cur.fetchone())[0]
             await db.execute("COMMIT")
-            return {"status": "ok", "rights": rights, "giver_id": int(gift["giver_id"])}
+            return {"status": "ok", "rights": rights, "giver_id": giver_id}
         except Exception:
             await db.execute("ROLLBACK")
             raise
 
 
 async def revoke_gift(token: str, user_id: int) -> dict:
-    """Даритель забирает право обратно, пока друг не открыл ссылку (до конца суток).
-    status: ok | not_active (ссылка уже использована/отозвана) | not_found | expired"""
+    """Даритель отменяет свою ещё не принятую ссылку (права не затрагиваются — их не списывали).
+    status: ok | not_active (уже принята/отменена) | not_found | expired"""
     day = today_str()
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
@@ -518,10 +533,6 @@ async def revoke_gift(token: str, user_id: int) -> dict:
             if cur.rowcount != 1:
                 await db.execute("ROLLBACK")
                 return {"status": "not_active"}
-            await db.execute(
-                "UPDATE meal_rights SET rights = rights + 1 WHERE user_id = ? AND day = ?",
-                (int(user_id), day),
-            )
             await db.execute("COMMIT")
             return {"status": "ok"}
         except Exception:
