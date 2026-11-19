@@ -8,7 +8,6 @@ ROLE_STUDENT = "student"
 
 # --- Тексты кнопок ---
 STUDENT_BTN_GIFT = "🎁 Угостить друга"
-STUDENT_BTN_ACCEPT_GIFT = "🎟 Ввести код подарка"
 STAFF_BTN_START = "▶️ Начать выдачу"
 BTN_CONFIRM = "✅ Подтвердить"
 BTN_REVOKE_GIFT = "↩️ Забрать подарок обратно"
@@ -36,7 +35,6 @@ STUDENT_INACTIVE_TEXT = (
 CB_STAFF_START = "staff_start"          # сотрудник: «Начать выдачу»
 CB_MEAL_CONFIRM = "meal_ok"             # студент: подтвердить запрос после «Получить обед»
 CB_MEAL_GIVE_PREFIX = "meal_give:"      # сотрудник: подтвердить выдачу (meal_give:<id запроса>)
-CB_GIFT_ACCEPT = "gift_accept"          # студент: ввести код подарка вручную
 CB_GIFT_NEW = "gift_new"                # студент: «Угостить друга»
 CB_GIFT_REVOKE_PREFIX = "gift_revoke:"  # студент: забрать подарок (gift_revoke:<токен>)
 CB_MEAL_GET = "meal_get"                # студент: «Получить обед»
@@ -81,8 +79,7 @@ STUDENT_HELP_TEXT = (
     "2. Сотрудник получит ваше имя и выдаст обед — он подтвердит выдачу у себя, показывать ничего не нужно.\n"
     "3. На сутки у вас одно право на обед. Неиспользованное сгорает в конце суток.\n"
     "4. «🎁 Угостить друга» создаёт одноразовую ссылку: друг откроет её и получит ваше право. "
-    "Если ссылка у друга не открывается, он может ввести код подарка кнопкой «🎟 Ввести код подарка». "
-    "Пока подарок не приняли, право можно забрать обратно.\n"
+    "Пока друг не открыл ссылку, право можно забрать обратно.\n"
     "5. Если сотрудник не подтвердил выдачу за отведённое время, право вернётся к вам."
 )
 STAFF_HELP_TEXT = (
@@ -131,7 +128,6 @@ def get_start_menu_inline(role: str) -> InlineKeyboardMarkup:
     else:  # student
         keyboard.append([InlineKeyboardButton(text=STUDENT_BTN_GET, callback_data=CB_MEAL_GET)])
         keyboard.append([InlineKeyboardButton(text=STUDENT_BTN_GIFT, callback_data=CB_GIFT_NEW)])
-        keyboard.append([InlineKeyboardButton(text=STUDENT_BTN_ACCEPT_GIFT, callback_data=CB_GIFT_ACCEPT)])
         keyboard.append([InlineKeyboardButton(text=STUDENT_BTN_FEEDBACK, callback_data=CB_FEEDBACK)])
         keyboard.append([InlineKeyboardButton(text=BTN_HELP, callback_data=CB_HELP)])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)

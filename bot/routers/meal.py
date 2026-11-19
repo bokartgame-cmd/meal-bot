@@ -8,17 +8,14 @@
 """
 import asyncio
 import logging
-import re
 
 from aiogram import F, Router
-from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 import config
-from bot.fsm import GiftAccept
 from bot.keyboards import (
-    CB_GIFT_ACCEPT,
     CB_GIFT_NEW,
     CB_GIFT_REVOKE_PREFIX,
     CB_MEAL_CONFIRM,
@@ -277,16 +274,16 @@ async def cb_gift_new(callback: CallbackQuery):
         return
     await callback.answer()
     link = generate_diplink(f"{meals.GIFT_PREFIX}{res['token']}", is_max=True)
-    code = _pretty_code(res["token"])
     logger.info("Подарок: студент %s создал ссылку %s", uid, link)
     await callback.message.answer(
         "🎁 Ссылка для друга:\n"
         f"{link}\n\n"
-        f"Если ссылка не открывается, друг может нажать «🎟 Ввести код подарка» и отправить код:\n{code}\n\n"
-        "Перешлите это другу: он получит ваше право на обед. "
+        "Перешлите её другу: он получит ваше право на обед. "
         "Подарок можно принять один раз и только до конца суток.\n"
         "Ваше право на обед передано в подарок. Пока друг не открыл ссылку, "
         "вы можете забрать его обратно.",
+        # без parse_mode: в HTML/Markdown подчёркивание в имени бота (…_bot) ломает ссылку
+        parse_mode=None,
         reply_markup=get_gift_revoke_inline(res["token"]),
     )
 
@@ -304,18 +301,8 @@ async def cb_gift_revoke(callback: CallbackQuery):
     await _safe_edit(callback, text)
 
 
-def _pretty_code(token: str) -> str:
-    """16 hex-символов группами по 4: ab12-cd34-ef56-7890"""
-    return "-".join(token[i:i + 4] for i in range(0, len(token), 4))
-
-
-def _parse_code(text: str) -> str:
-    """Код подарка из текста пользователя: без дефисов, пробелов и регистра"""
-    return re.sub(r"[^0-9a-f]", "", (text or "").lower())
-
-
 async def _accept_gift(message: Message, uid: int, token: str) -> None:
-    """Друг принимает подарок (по ссылке или по коду): право переносится ему"""
+    """Друг принял подарок по ссылке: право переносится ему"""
     if await _is_staff(uid):
         await message.answer("ℹ️ Подарок может принять только студент.")
         return
@@ -324,7 +311,7 @@ async def _accept_gift(message: Message, uid: int, token: str) -> None:
     if status == "not_student":
         await message.answer(
             "Чтобы принять подарок, сначала пройдите регистрацию в боте (/start), "
-            "а потом откройте ссылку или введите код ещё раз."
+            "а потом откройте ссылку ещё раз."
         )
     elif status != "ok":
         await message.answer(GIFT_DENIED_TEXTS.get(status, GIFT_DENIED_TEXTS["invalid"]))
@@ -343,36 +330,6 @@ async def on_gift_link(message: Message, command: CommandObject, state: FSMConte
     await state.clear()
     token = (command.args or "")[len(meals.GIFT_PREFIX):].lstrip("_")  # lstrip: старые ссылки gift_<токен>
     logger.info("Подарок: пользователь %s открыл ссылку (payload=%r)", message.from_user.id, command.args)
-    await _accept_gift(message, message.from_user.id, token)
-
-
-@router.callback_query(F.data == CB_GIFT_ACCEPT)
-async def cb_gift_accept(callback: CallbackQuery, state: FSMContext):
-    """Запасной путь: код подарка вводится вручную, если ссылка не открывается"""
-    await callback.answer()
-    await state.set_state(GiftAccept.waiting_code)
-    await callback.message.answer("🎟 Пришлите код подарка (его прислал друг), например: ab12-cd34-ef56-7890")
-
-
-@router.message(Command("gift"))
-async def cmd_gift(message: Message, command: CommandObject, state: FSMContext):
-    await state.clear()
-    token = _parse_code(command.args or "")
-    if not token:
-        await state.set_state(GiftAccept.waiting_code)
-        await message.answer("🎟 Пришлите код подарка (его прислал друг), например: ab12-cd34-ef56-7890")
-        return
-    await _accept_gift(message, message.from_user.id, token)
-
-
-@router.message(GiftAccept.waiting_code, F.text, ~F.text.startswith("/"))
-async def on_gift_code(message: Message, state: FSMContext):
-    token = _parse_code(message.text)
-    await state.clear()
-    if len(token) != 16:
-        await message.answer("❌ Код не похож на код подарка. Нажмите «🎟 Ввести код подарка» и попробуйте ещё раз.",
-                             reply_markup=get_start_menu_inline("student"))
-        return
     await _accept_gift(message, message.from_user.id, token)
 
 
